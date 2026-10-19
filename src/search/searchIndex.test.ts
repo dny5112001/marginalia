@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeSnippets, parseQuery, SearchIndex, tokenize } from "./searchIndex";
+import { makeSnippets, SearchIndex, tokenize } from "./searchIndex";
 import { fuzzyFilter, fuzzyMatch } from "./fuzzy";
 
 function build() {
@@ -13,18 +13,6 @@ function build() {
 describe("tokenize", () => {
   it("lowercases and strips diacritics", () => {
     expect(tokenize("Café RÉSUMÉ naïve")).toEqual(["cafe", "resume", "naive"]);
-  });
-});
-
-describe("parseQuery", () => {
-  it("separates filters, phrases and terms", () => {
-    expect(parseQuery('tag:#food path:Recipes "boil water" salt file:pas #extra')).toEqual({
-      terms: ["salt"],
-      phrases: ["boil water"],
-      tags: ["food", "extra"],
-      paths: ["recipes"],
-      files: ["pas"],
-    });
   });
 });
 

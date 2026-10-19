@@ -26,6 +26,7 @@ export const tauriBackend: VaultBackend = {
   writeText: (path, content, expectedMtime) =>
     call<number>("fs_write_text", { path, content, expectedMtime: expectedMtime ?? null }),
   createFile: (path, content) => call<number>("fs_create_file", { path, content }),
+  createBinary: (path, base64) => call<void>("fs_create_binary", { path, base64 }),
   createFolder: (path) => call<void>("fs_create_folder", { path }),
   rename: (from, to) => call<void>("fs_rename", { from, to }),
   remove: (path) => call<void>("fs_delete", { path }),

@@ -1,7 +1,8 @@
 import { memo, useMemo, useRef, useState } from "react";
 import { ChevronRight, File, FileText, Folder, FolderOpen, Image as ImageIcon } from "lucide-react";
-import type { FileEntry } from "../../types";
-import { useVault, createNote, movePath, documents } from "../../vault/store";
+import type { FileEntry, FileSort } from "../../types";
+import { useVault, createNote, movePath, documents, duplicateNote } from "../../vault/store";
+import { useBookmarks } from "../../features/bookmarks/store";
 import { useWorkspace } from "../../features/workspace/store";
 import { useUi, toast } from "../../features/ui/store";
 import { promptDelete, promptMove, promptNewFolder, promptRename } from "../../commands/appCommands";
@@ -13,7 +14,7 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-export function buildTree(entries: FileEntry[]): TreeNode[] {
+export function buildTree(entries: FileEntry[], sort: FileSort = "name-asc"): TreeNode[] {
   const root: TreeNode[] = [];
   const dirs = new Map<string, TreeNode>();
   const sorted = [...entries].sort((a, b) => a.path.split("/").length - b.path.split("/").length);
@@ -23,14 +24,16 @@ export function buildTree(entries: FileEntry[]): TreeNode[] {
     const parent = dirname(e.path);
     (parent ? (dirs.get(parent)?.children ?? root) : root).push(node);
   }
+  const byName = (a: TreeNode, b: TreeNode) => basename(a.entry.path).localeCompare(basename(b.entry.path), undefined, { numeric: true, sensitivity: "base" });
   const sortRec = (nodes: TreeNode[]) => {
-    nodes.sort((a, b) =>
-      a.entry.kind !== b.entry.kind
-        ? a.entry.kind === "dir"
-          ? -1
-          : 1
-        : basename(a.entry.path).localeCompare(basename(b.entry.path), undefined, { numeric: true, sensitivity: "base" }),
-    );
+    nodes.sort((a, b) => {
+      // Folders always come first and are ordered by name; files follow the chosen order.
+      if (a.entry.kind !== b.entry.kind) return a.entry.kind === "dir" ? -1 : 1;
+      if (a.entry.kind === "dir" || sort === "name-asc") return byName(a, b);
+      if (sort === "name-desc") return -byName(a, b);
+      const d = a.entry.mtime - b.entry.mtime;
+      return (sort === "modified-new" ? -d : d) || byName(a, b);
+    });
     nodes.forEach((n) => sortRec(n.children));
   };
   sortRec(root);
@@ -41,7 +44,8 @@ const DRAG_MIME = "application/x-marginalia-path";
 
 export function FileTree() {
   const entries = useVault((s) => s.entries);
-  const tree = useMemo(() => buildTree(entries), [entries]);
+  const sort = useWorkspace((s) => s.fileSort);
+  const tree = useMemo(() => buildTree(entries, sort), [entries, sort]);
   const [rootDrop, setRootDrop] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -138,6 +142,16 @@ const TreeItem = memo(function TreeItem({ node, depth }: { node: TreeNode; depth
       { label: "Rename…", shortcut: "F2", run: () => void promptRename(entry.path) },
       { label: "Move to…", run: () => void promptMove(entry.path) },
       ...(!isDir ? [{ label: "New note in this folder", run: () => void createNote(folder) }] : []),
+      ...(md
+        ? [
+            {
+              label: useBookmarks.getState().has({ type: "file", path: entry.path }) ? "Remove bookmark" : "Bookmark",
+              run: () => void useBookmarks.getState().toggle({ type: "file", path: entry.path }),
+            },
+            { label: "Make a copy", run: () => void duplicateNote(entry.path) },
+            { label: "Open local history", run: () => useUi.setState({ historyPath: entry.path }) },
+          ]
+        : []),
       { label: "Copy path", run: () => void navigator.clipboard?.writeText(entry.path) },
       { label: "", separator: true },
       { label: "Delete", danger: true, run: () => void promptDelete(entry.path) },

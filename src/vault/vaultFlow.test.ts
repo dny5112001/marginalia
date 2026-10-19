@@ -15,9 +15,18 @@ import {
   vaultIndex,
   expandTemplate,
   closeVault,
+  duplicateNote,
+  attachmentFolderFor,
+  saveAttachment,
+  editNote,
+  dailyNotes,
+  openDailyNote,
 } from "./store";
+import { fileHistory } from "../features/history";
+import { lineDiffStats } from "../components/overlays/HistoryModal";
 import { useWorkspace } from "../features/workspace/store";
 import { useSettings } from "../settings/store";
+import { BOOKMARKS_PATH, useBookmarks } from "../features/bookmarks/store";
 
 let backend: MemoryBackend;
 
@@ -152,6 +161,88 @@ describe("vault flows", () => {
     await closeVault();
     await openVault({});
     expect(vaultIndex.notePaths()).toEqual([]);
+    expect(await createNote()).toBe("Untitled.md");
+  });
+
+  it("persists bookmarks in the vault and keeps them in sync with renames and deletes", async () => {
+    const b = useBookmarks.getState();
+    await b.toggle({ type: "file", path: "Ideas.md" });
+    await b.toggle({ type: "search", query: "tag:x" });
+    await b.toggle({ type: "heading", path: "Projects/Plan.md", heading: "Top" });
+    expect(JSON.parse(backend.files.get(BOOKMARKS_PATH)!.content).items).toHaveLength(3);
+    // Hidden config does not appear in the file tree or index.
+    expect(useVault.getState().entries.some((e) => e.path.startsWith(".marginalia"))).toBe(false);
+    await renamePath("Projects", "Work");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useBookmarks.getState().items.find((x) => x.type === "heading")).toMatchObject({ path: "Work/Plan.md" });
+    await deletePath("Ideas.md");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useBookmarks.getState().items.map((x) => x.type)).toEqual(["search", "heading"]);
+    // Reload from disk.
+    useBookmarks.getState().reset();
+    await useBookmarks.getState().load();
+    expect(useBookmarks.getState().items).toHaveLength(2);
+  });
+
+  it("tolerates a corrupt bookmarks file without overwriting it", async () => {
+    backend.seed(BOOKMARKS_PATH, "{ not json");
+    await useBookmarks.getState().load();
+    expect(useBookmarks.getState().error).toBeTruthy();
+    expect(backend.files.get(BOOKMARKS_PATH)!.content).toBe("{ not json");
+  });
+
+  it("duplicates a note without overwriting", async () => {
+    expect(await duplicateNote("Ideas.md")).toBe("Ideas 1.md");
+    expect(backend.files.get("Ideas 1.md")!.content).toBe(backend.files.get("Ideas.md")!.content);
+  });
+
+  it("saves pasted attachments without overwriting and returns an embed", async () => {
+    expect(attachmentFolderFor("a/b/Note.md", "")).toBe("");
+    expect(attachmentFolderFor("a/b/Note.md", "./")).toBe("a/b");
+    expect(attachmentFolderFor("a/b/Note.md", "./assets")).toBe("a/b/assets");
+    expect(attachmentFolderFor("a/b/Note.md", "Attachments")).toBe("Attachments");
+    useSettings.getState().update({ attachmentFolder: "Attachments" });
+    const md1 = await saveAttachment("Home.md", { name: "image.png", type: "image/png", base64: "AAAA" });
+    expect(md1).toMatch(/^!\[\[Pasted image \d{14}\.png\]\]$/);
+    const md2 = await saveAttachment("Home.md", { name: "report.pdf", type: "application/pdf", base64: "AAAA" });
+    const md3 = await saveAttachment("Home.md", { name: "report.pdf", type: "application/pdf", base64: "BBBB" });
+    expect(md2).toBe("[[report.pdf]]");
+    expect(md3).toBe("[[report 1.pdf]]");
+    expect(backend.binaries.get("Attachments/report.pdf")).toBe("AAAA");
+  });
+
+  it("keeps earlier versions and deleted notes in local history", async () => {
+    const vault = useVault.getState().info!.path;
+    await documents.open("Ideas.md");
+    documents.edit("Ideas.md", "new text");
+    await documents.save("Ideas.md");
+    await new Promise((r) => setTimeout(r, 0));
+    const snaps = await fileHistory.list(vault, "Ideas.md");
+    expect(snaps[0].content).toBe("# Ideas\nBack [[Home]]");
+    await deletePath("Projects/Plan.md");
+    expect((await fileHistory.list(vault, "Projects/Plan.md"))[0].content).toContain("Plan with");
+    expect(lineDiffStats("a\nb\nc", "a\nc\nd")).toEqual({ added: 1, removed: 1 });
+  });
+
+  it("edits closed notes safely on disk", async () => {
+    expect(await editNote("Ideas.md", (c) => c + "\nmore")).toBe(true);
+    expect(backend.files.get("Ideas.md")!.content.endsWith("more")).toBe(true);
+    expect(vaultIndex.content("Ideas.md")!.endsWith("more")).toBe(true);
+  });
+
+  it("names daily notes by format and finds them again", async () => {
+    useSettings.getState().update({ dailyNoteFormat: "YYYY-MM-DD", dailyNoteFolder: "Daily" });
+    await openDailyNote(new Date(2024, 0, 5));
+    await openDailyNote(new Date(2024, 0, 7));
+    expect(backend.files.has("Daily/2024-01-05.md")).toBe(true);
+    expect(dailyNotes().map((d) => d.path)).toEqual(["Daily/2024-01-05.md", "Daily/2024-01-07.md"]);
+  });
+
+  it("respects the new-note location setting", async () => {
+    useWorkspace.getState().openNote("Projects/Plan.md");
+    useSettings.getState().update({ newNoteLocation: "current" });
+    expect(await createNote()).toBe("Projects/Untitled.md");
+    useSettings.getState().update({ newNoteLocation: "root" });
     expect(await createNote()).toBe("Untitled.md");
   });
 

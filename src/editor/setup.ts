@@ -24,10 +24,12 @@ import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, t
 import { tags as t } from "@lezer/highlight";
 import { splitWikiTarget } from "../links/parse";
 import { frontmatter } from "./frontmatter";
+import { livePreview } from "./livePreview";
 
 export const lineNumbersComp = new Compartment();
 export const wrapComp = new Compartment();
 export const fontComp = new Compartment();
+export const livePreviewComp = new Compartment();
 
 const highlight = HighlightStyle.define([
   { tag: t.heading1, class: "md-h md-h1" },
@@ -111,6 +113,9 @@ export interface EditorHooks {
   onSelection?(info: { line: number; col: number; selected: number }): void;
   onFollowLink(link: { target: string; heading?: string; kind: "wiki" | "markdown" }, newTab: boolean): void;
   noteNames(): { label: string; detail: string }[];
+  loadImage(target: string, kind: "wiki" | "markdown"): Promise<string | null>;
+  /** Save dropped/pasted files and return the Markdown to insert for each. */
+  onFiles?(files: File[]): Promise<string[]>;
   headingsFor(target: string): string[];
   onSave(): void;
 }
@@ -209,15 +214,32 @@ function insertLink(view: EditorView) {
   return true;
 }
 
+async function insertFiles(view: EditorView, files: File[], pos: number, hooks: EditorHooks) {
+  const snippets = await hooks.onFiles!(files);
+  const text = snippets.filter(Boolean).join("\n");
+  if (!text) return;
+  const at = Math.min(pos, view.state.doc.length);
+  view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length } });
+}
+
 export function fontTheme(size: number) {
   return EditorView.theme({ "&": { fontSize: `${size}px` } });
 }
 
-export function createExtensions(
-  hooks: EditorHooks,
-  opts: { lineNumbers: boolean; wrap: boolean; fontSize: number },
-): Extension[] {
+export interface EditorOptions {
+  lineNumbers: boolean;
+  wrap: boolean;
+  fontSize: number;
+  livePreview: boolean;
+}
+
+function livePreviewExt(hooks: EditorHooks, on: boolean): Extension {
+  return on ? livePreview({ followLink: (l, n) => hooks.onFollowLink(l, n), loadImage: (t, k) => hooks.loadImage(t, k) }) : [];
+}
+
+export function createExtensions(hooks: EditorHooks, opts: EditorOptions): Extension[] {
   return [
+    livePreviewComp.of(livePreviewExt(hooks, opts.livePreview)),
     lineNumbersComp.of(opts.lineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []),
     wrapComp.of(opts.wrap ? EditorView.lineWrapping : []),
     fontComp.of(fontTheme(opts.fontSize)),
@@ -247,11 +269,20 @@ export function createExtensions(
       { key: "Mod-l", run: toggleChecklist },
       { key: "Mod-k", run: insertLink },
       {
-        key: "Mod-Enter",
+        key: "Alt-Enter",
         run: (view) => {
           const l = linkAt(view.state, view.state.selection.main.head);
           if (!l) return false;
           hooks.onFollowLink(l, false);
+          return true;
+        },
+      },
+      {
+        key: "Mod-Enter",
+        run: (view) => {
+          const l = linkAt(view.state, view.state.selection.main.head);
+          if (!l) return false;
+          hooks.onFollowLink(l, true);
           return true;
         },
       },
@@ -263,6 +294,21 @@ export function createExtensions(
       ...defaultKeymap,
     ]),
     EditorView.domEventHandlers({
+      paste(e, view) {
+        const files = [...(e.clipboardData?.files ?? [])];
+        if (!files.length || !hooks.onFiles) return false;
+        e.preventDefault();
+        void insertFiles(view, files, view.state.selection.main.head, hooks);
+        return true;
+      },
+      drop(e, view) {
+        const files = [...(e.dataTransfer?.files ?? [])];
+        if (!files.length || !hooks.onFiles) return false;
+        e.preventDefault();
+        const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
+        void insertFiles(view, files, pos, hooks);
+        return true;
+      },
       mousedown(e, view) {
         if (!(e.metaKey || e.ctrlKey) || e.button !== 0) return false;
         const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
@@ -285,9 +331,10 @@ export function createExtensions(
   ];
 }
 
-export function reconfigure(view: EditorView, opts: { lineNumbers: boolean; wrap: boolean; fontSize: number }) {
+export function reconfigure(view: EditorView, opts: EditorOptions, hooks: EditorHooks) {
   view.dispatch({
     effects: [
+      livePreviewComp.reconfigure(livePreviewExt(hooks, opts.livePreview)),
       lineNumbersComp.reconfigure(opts.lineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []),
       wrapComp.reconfigure(opts.wrap ? EditorView.lineWrapping : []),
       fontComp.reconfigure(fontTheme(opts.fontSize)),

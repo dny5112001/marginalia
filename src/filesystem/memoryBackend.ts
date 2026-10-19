@@ -80,8 +80,10 @@ export class MemoryBackend implements VaultBackend {
 
   async list(): Promise<FileEntry[]> {
     const out: FileEntry[] = [];
-    for (const d of this.dirs) out.push({ path: d, kind: "dir", size: 0, mtime: 0 });
-    for (const [p, f] of this.files) out.push({ path: p, kind: "file", size: f.content.length, mtime: f.mtime });
+    // Like the native backend, hidden entries (e.g. `.marginalia/`) are not listed.
+    const hidden = (p: string) => p.split("/").some((part) => part.startsWith("."));
+    for (const d of this.dirs) if (!hidden(d)) out.push({ path: d, kind: "dir", size: 0, mtime: 0 });
+    for (const [p, f] of this.files) if (!hidden(p)) out.push({ path: p, kind: "file", size: f.content.length, mtime: f.mtime });
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 
@@ -93,10 +95,12 @@ export class MemoryBackend implements VaultBackend {
   }
 
   async readAllMarkdown() {
-    return [...this.files].filter(([p]) => isMarkdown(p)).map(([path, f]) => ({ path, content: f.content, mtime: f.mtime }));
+    return [...this.files].filter(([p]) => isMarkdown(p) && !p.split("/").some((x) => x.startsWith("."))).map(([path, f]) => ({ path, content: f.content, mtime: f.mtime }));
   }
 
   async readBase64(path: string) {
+    const bin = this.binaries.get(path);
+    if (bin != null) return bin;
     const f = await this.readText(path);
     return btoa(unescape(encodeURIComponent(f.content)));
   }
@@ -124,6 +128,17 @@ export class MemoryBackend implements VaultBackend {
     const mtime = this.tick();
     this.files.set(path, { content, mtime });
     return mtime;
+  }
+
+  binaries = new Map<string, string>();
+
+  async createBinary(path: string, base64: string) {
+    this.check(path);
+    if (this.exists(path)) throw new BackendError("alreadyExists", `Already exists: ${path}`);
+    this.mkdirs(dirname(path));
+    this.binaries.set(path, base64);
+    // Track it as a file so listings and link resolution see it.
+    this.files.set(path, { content: "", mtime: this.tick() });
   }
 
   async createFolder(path: string) {

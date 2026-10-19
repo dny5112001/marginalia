@@ -9,6 +9,9 @@ import { toast } from "../features/ui/store";
 import { rewriteLinks } from "../links/rewrite";
 import { basename, dirname, isAncestor, isMarkdown, joinPath, noteTitle, remapPath, uniquePath } from "./paths";
 import { readJson, writeJson } from "../settings/storage";
+import { useBookmarks } from "../features/bookmarks/store";
+import { expandTemplateVars, formatDate, parseDate } from "./dates";
+import { fileHistory } from "../features/history";
 
 interface VaultStore {
   info: VaultInfo | null;
@@ -40,6 +43,7 @@ export const documents = new DocumentManager({
   backend: getBackend,
   delayMs: () => getSettings().autosaveDelayMs,
   backupPrefix: () => `marginalia:backup:${vaultKey()}:`,
+  beforeWrite: (path, previous) => void fileHistory.recordBeforeSave(vaultKey(), path, previous).catch(() => {}),
 });
 
 const bumpIndex = () => useVault.setState((s) => ({ indexVersion: s.indexVersion + 1 }));
@@ -89,6 +93,8 @@ async function activate(info: VaultInfo) {
   useWorkspace.getState().load(info.path, (p) => exists.has(p));
   useVault.setState({ entries, status: "ready", indexing: false });
   bumpIndex();
+  void useBookmarks.getState().load();
+  void fileHistory.prune().catch(() => {});
   unwatch?.();
   unwatch = await backend.onChange((paths) => void handleExternalChanges(paths));
   void loadKnownVaults();
@@ -103,6 +109,7 @@ async function closeCurrent() {
   unwatch = null;
   vaultIndex.clear();
   useWorkspace.getState().reset();
+  useBookmarks.getState().reset();
   await getBackend().closeVault().catch(() => {});
   useVault.setState({ info: null, entries: [], status: "idle" });
 }
@@ -235,8 +242,19 @@ export async function handleExternalChanges(paths: string[]) {
 
 const takenPaths = () => useVault.getState().entries.map((e) => e.path);
 
+/** Folder for a new note when none is given, per the "Default location for new notes" setting. */
+export function defaultNoteFolder(): string {
+  const s = getSettings();
+  if (s.newNoteLocation === "root") return "";
+  if (s.newNoteLocation === "current") {
+    const t = useWorkspace.getState().activeTab();
+    return t?.kind === "note" && t.path ? dirname(t.path) : "";
+  }
+  return s.newNoteFolder;
+}
+
 export async function createNote(folder?: string, name = "Untitled", content = "", opts: { newTab?: boolean } = {}) {
-  const dir = folder ?? getSettings().newNoteFolder;
+  const dir = folder ?? defaultNoteFolder();
   const path = uniquePath(joinPath(dir, `${name}.md`), takenPaths());
   const ok = await attempt("Could not create note", () => getBackend().createFile(path, content));
   if (!ok) return null;
@@ -244,6 +262,44 @@ export async function createNote(folder?: string, name = "Untitled", content = "
   await refreshTree();
   useWorkspace.getState().openNote(path, { newTab: opts.newTab, mode: "edit" });
   return path;
+}
+
+/** Folder for new attachments: "" = vault root, "./" = next to the note, "./sub" = subfolder of the note's folder. */
+export function attachmentFolderFor(notePath: string, setting = getSettings().attachmentFolder): string {
+  const s = setting.trim();
+  if (s === "." || s === "./") return dirname(notePath);
+  if (s.startsWith("./")) return joinPath(dirname(notePath), s.slice(2));
+  return joinPath(s);
+}
+
+function stamp(d = new Date()) {
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+/**
+ * Save a pasted/dropped file into the vault next to `notePath` (per settings) and
+ * return the Markdown to insert, or null on failure. Never overwrites existing files.
+ */
+export async function saveAttachment(notePath: string, file: { name: string; type: string; base64: string }): Promise<string | null> {
+  const isImg = file.type.startsWith("image/");
+  const ext = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : isImg ? "." + (file.type.split("/")[1] || "png").replace("jpeg", "jpg").replace("svg+xml", "svg") : "";
+  const generic = !file.name || /^image\.(png|jpe?g|gif|webp)$/i.test(file.name);
+  const base = generic ? `Pasted image ${stamp()}${ext}` : file.name.replace(/[\\/:*?"<>|#^[\]]/g, "-");
+  const path = uniquePath(joinPath(attachmentFolderFor(notePath), base), takenPaths());
+  const ok = await attempt("Could not save attachment", () => getBackend().createBinary(path, file.base64));
+  if (!ok) return null;
+  await refreshTree();
+  // Use the shortest link that still resolves unambiguously.
+  const name = basename(path);
+  const target = vaultIndex.resolveTarget(name, notePath) === path ? name : path;
+  return isImg ? `![[${target}]]` : `[[${target}]]`;
+}
+
+/** "Make a copy": duplicate a note next to the original as "Name 1.md". */
+export async function duplicateNote(path: string) {
+  const content = documents.get(path)?.content ?? (await getBackend().readText(path).catch(() => null))?.content;
+  if (content == null) return null;
+  return createNote(dirname(path), noteTitle(uniquePath(path, takenPaths())), content);
 }
 
 export async function createFolder(parent: string, name: string) {
@@ -319,6 +375,8 @@ export async function renamePath(from: string, to: string): Promise<boolean> {
 
   documents.rename(from, to);
   useWorkspace.getState().renamePath(from, to);
+  useBookmarks.getState().remapPath(from, to);
+  void fileHistory.storage.rename(vaultKey(), from, to).catch(() => {});
   for (const oldPath of moved) {
     const content = vaultIndex.content(oldPath);
     vaultIndex.remove(oldPath);
@@ -359,11 +417,17 @@ export async function movePath(path: string, targetFolder: string) {
 
 export async function deletePath(path: string) {
   for (const p of documents.openPaths()) if (isAncestor(path, p)) await documents.flush(p);
+  // Keep the final text of deleted notes in local history (in addition to the OS trash).
+  for (const p of vaultIndex.notePaths()) {
+    const content = isAncestor(path, p) ? vaultIndex.content(p) : undefined;
+    if (content != null) await fileHistory.recordDeletion(vaultKey(), p, content).catch(() => {});
+  }
   const ok = await attempt("Could not delete", () => getBackend().remove(path));
   if (!ok) return false;
   for (const p of documents.openPaths()) if (isAncestor(path, p)) documents.close(p);
   for (const p of vaultIndex.notePaths()) if (isAncestor(path, p)) vaultIndex.remove(p);
   useWorkspace.getState().removePath(path);
+  useBookmarks.getState().removePath(path);
   await refreshTree();
   toast(`Moved "${basename(path)}" to trash.`);
   return true;
@@ -383,7 +447,7 @@ export async function followLink(target: string, source: string, opts: { newTab?
     } else toast(`"${basename(resolved)}" is an attachment and cannot be opened as a note.`);
     return;
   }
-  const path = uniquePath(vaultIndex.newNotePath(target, getSettings().newNoteFolder), takenPaths());
+  const path = uniquePath(vaultIndex.newNotePath(target, defaultNoteFolder()), takenPaths());
   const folder = dirname(path);
   if (folder && !useVault.getState().entries.some((e) => e.path === folder)) {
     await attempt("Could not create folder", () => getBackend().createFolder(folder));
@@ -402,12 +466,28 @@ function pad(n: number) {
 }
 
 export function todayName(d = new Date()) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return formatDate(d, getSettings().dailyNoteFormat);
 }
 
-export async function openDailyNote() {
+async function dailyNoteContent(title: string) {
+  const tpl = getSettings().dailyNoteTemplate;
+  if (!tpl) return `# ${title}\n\n`;
+  const path = vaultIndex.resolveTarget(tpl, "") ?? (vaultIndex.hasFile(tpl) ? tpl : null);
+  if (!path) {
+    toast(`Daily note template "${tpl}" not found; created an empty note.`, "error");
+    return "";
+  }
+  try {
+    return expandTemplateVars((await getBackend().readText(path)).content, title);
+  } catch {
+    return "";
+  }
+}
+
+export async function openDailyNote(date = new Date()) {
   const s = getSettings();
-  const path = joinPath(s.dailyNoteFolder, `${todayName()}.md`);
+  const name = todayName(date);
+  const path = joinPath(s.dailyNoteFolder, `${name}.md`);
   if (vaultIndex.hasFile(path)) {
     useWorkspace.getState().openNote(path);
     return;
@@ -416,7 +496,29 @@ export async function openDailyNote() {
   if (folder && !useVault.getState().entries.some((e) => e.path === folder)) {
     await attempt("Could not create daily notes folder", () => getBackend().createFolder(folder));
   }
-  await createNote(folder, todayName(), `# ${todayName()}\n\n`);
+  await createNote(folder, name, await dailyNoteContent(name));
+}
+
+/** Existing daily notes sorted by date (names that parse with the configured format). */
+export function dailyNotes(): { path: string; date: Date }[] {
+  const s = getSettings();
+  return vaultIndex
+    .notePaths()
+    .filter((p) => dirname(p) === s.dailyNoteFolder)
+    .map((p) => ({ path: p, date: parseDate(noteTitle(p), s.dailyNoteFormat) }))
+    .filter((x): x is { path: string; date: Date } => !!x.date)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+/** Open the daily note before/after the current one (or today, when none is open). */
+export function openAdjacentDailyNote(dir: -1 | 1) {
+  const notes = dailyNotes();
+  const t = useWorkspace.getState().activeTab();
+  const cur = t?.path ? parseDate(noteTitle(t.path), getSettings().dailyNoteFormat) : null;
+  const pivot = (cur ?? new Date()).getTime();
+  const target = dir < 0 ? [...notes].reverse().find((n) => n.date.getTime() < pivot) : notes.find((n) => n.date.getTime() > pivot);
+  if (!target) return toast(dir < 0 ? "There's no daily note before this one." : "There's no daily note after this one.");
+  useWorkspace.getState().openNote(target.path);
 }
 
 export function templatePaths(): string[] {
@@ -425,12 +527,29 @@ export function templatePaths(): string[] {
   return vaultIndex.notePaths().filter((p) => isAncestor(folder, p) && p !== folder);
 }
 
-/** Expand `{{title}}`, `{{date}}`, `{{time}}` in a template. */
+/** Expand `{{title}}`, `{{date}}`, `{{time}}`, `{{date:FORMAT}}`, `{{time:FORMAT}}` in a template. */
 export function expandTemplate(template: string, title: string, now = new Date()) {
-  return template
-    .replace(/\{\{\s*title\s*\}\}/g, title)
-    .replace(/\{\{\s*date\s*\}\}/g, todayName(now))
-    .replace(/\{\{\s*time\s*\}\}/g, `${pad(now.getHours())}:${pad(now.getMinutes())}`);
+  return expandTemplateVars(template, title, now);
+}
+
+/**
+ * Transform a note's content. Open notes are edited in their buffer (autosaved as usual);
+ * closed notes are rewritten on disk only if unchanged since they were read.
+ */
+export async function editNote(path: string, fn: (content: string) => string): Promise<boolean> {
+  if (documents.get(path)) {
+    const d = documents.get(path)!;
+    documents.replaceContent(path, fn(d.content));
+    return true;
+  }
+  return attempt(`Could not update ${basename(path)}`, async () => {
+    const disk = await getBackend().readText(path);
+    const next = fn(disk.content);
+    if (next === disk.content) return;
+    await getBackend().writeText(path, next, disk.mtime);
+    vaultIndex.upsert(path, next);
+    bumpIndex();
+  });
 }
 
 export async function saveAll() {

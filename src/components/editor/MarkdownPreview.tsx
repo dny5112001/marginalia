@@ -1,24 +1,13 @@
 import { useDeferredValue, useEffect, useMemo, useRef } from "react";
 import { renderMarkdown } from "../../markdown/render";
 import { followLink, useVault, vaultIndex } from "../../vault/store";
-import { getBackend } from "../../filesystem";
 import { useWorkspace } from "../../features/workspace/store";
 import { useSettings } from "../../settings/store";
 import { headingSlug } from "../../links/parse";
-import { dirname, extname, resolveRelative } from "../../vault/paths";
+import { loadVaultImage } from "../../markdown/images";
 import { openExternal } from "./MarkdownEditor";
 
-const MIME: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-  ".bmp": "image/bmp",
-  ".avif": "image/avif",
-};
-const imageCache = new Map<string, string>();
+
 
 export function MarkdownPreview({ path, content }: { path: string; content: string }) {
   const deferred = useDeferredValue(content);
@@ -38,41 +27,16 @@ export function MarkdownPreview({ path, content }: { path: string; content: stri
     let cancelled = false;
     el.querySelectorAll<HTMLImageElement>("img[data-src]").forEach((img) => {
       const raw = img.dataset.src!;
-      let rel: string | null;
-      if (raw.startsWith("wikilink:")) {
-        rel = vaultIndex.resolveTarget(decodeURIComponent(raw.slice(9).split("#")[0]), path);
-      } else {
-        let decoded = raw;
-        try {
-          decoded = decodeURI(raw);
-        } catch {
-          /* raw */
-        }
-        rel = vaultIndex.resolveLink({ target: decoded, kind: "markdown" }, path) ?? resolveRelative(dirname(path), decoded);
-      }
-      const mime = rel ? MIME[extname(rel)] : undefined;
-      if (!rel || !mime) {
-        img.alt = `Missing image: ${raw}`;
-        img.classList.add("missing");
-        return;
-      }
-      const cached = imageCache.get(rel);
-      if (cached) {
-        img.src = cached;
-        return;
-      }
-      getBackend()
-        .readBase64(rel)
-        .then((b64) => {
-          const url = `data:${mime};base64,${b64}`;
-          if (imageCache.size > 100) imageCache.clear();
-          imageCache.set(rel!, url);
-          if (!cancelled) img.src = url;
-        })
-        .catch(() => {
-          img.alt = `Could not load ${rel}`;
+      const wiki = raw.startsWith("wikilink:");
+      const target = wiki ? decodeURIComponent(raw.slice(9).split("#")[0]) : raw;
+      void loadVaultImage(target, wiki ? "wiki" : "markdown", path).then((url) => {
+        if (cancelled) return;
+        if (url) img.src = url;
+        else {
+          img.alt = `Missing image: ${target}`;
           img.classList.add("missing");
-        });
+        }
+      });
     });
     return () => {
       cancelled = true;
@@ -126,7 +90,7 @@ export function MarkdownPreview({ path, content }: { path: string; content: stri
   };
 
   return (
-    <div className="preview-scroll">
+    <>
       <article
         ref={ref}
         className="markdown-preview"
@@ -137,6 +101,6 @@ export function MarkdownPreview({ path, content }: { path: string; content: stri
         }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
-    </div>
+    </>
   );
 }

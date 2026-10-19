@@ -1,11 +1,6 @@
 .preview-pane {
   overflow: hidden;
 }
-.preview-scroll {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
 .preview-title {
   max-width: 760px;
   width: 100%;
@@ -192,4 +187,42 @@
 }
 .hljs-deletion {
   color: var(--danger);
+}
+
+/* Callouts */
+.markdown-preview .callout {
+  --callout: var(--accent);
+  margin: 0 0 1em;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--callout);
+  background: color-mix(in srgb, var(--callout) 10%, transparent);
+}
+.markdown-preview .callout > :last-child {
+  margin-bottom: 0;
+}
+.markdown-preview .callout-title {
+  font-weight: 650;
+  color: var(--callout);
+  margin-bottom: 4px;
+}
+.markdown-preview .callout[data-callout="warning"],
+.markdown-preview .callout[data-callout="caution"],
+.markdown-preview .callout[data-callout="attention"] {
+  --callout: var(--warn);
+}
+.markdown-preview .callout[data-callout="danger"],
+.markdown-preview .callout[data-callout="error"],
+.markdown-preview .callout[data-callout="bug"],
+.markdown-preview .callout[data-callout="failure"] {
+  --callout: var(--danger);
+}
+.markdown-preview .callout[data-callout="info"],
+.markdown-preview .callout[data-callout="note"],
+.markdown-preview .callout[data-callout="todo"] {
+  --callout: var(--tok-fn);
+}
+.markdown-preview .callout[data-callout="quote"],
+.markdown-preview .callout[data-callout="example"] {
+  --callout: var(--text-muted);
 }

@@ -104,6 +104,14 @@ async fn fs_create_file(state: State<'_, VaultState>, path: String, content: Str
 }
 
 #[tauri::command]
+async fn fs_create_binary(state: State<'_, VaultState>, path: String, base64: String) -> AppResult<()> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|e| AppError::InvalidPath(format!("invalid attachment data: {e}")))?;
+    fsops::create_binary(&state.root()?, &path, &bytes)
+}
+
+#[tauri::command]
 async fn fs_create_folder(state: State<'_, VaultState>, path: String) -> AppResult<()> {
     fsops::create_folder(&state.root()?, &path)
 }
@@ -187,6 +195,7 @@ pub fn run() {
             fs_read_base64,
             fs_write_text,
             fs_create_file,
+            fs_create_binary,
             fs_create_folder,
             fs_rename,
             fs_delete,

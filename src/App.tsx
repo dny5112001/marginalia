@@ -15,6 +15,8 @@ import { SettingsModal, ShortcutsModal } from "./components/overlays/SettingsMod
 import { Dialogs } from "./components/overlays/Dialogs";
 import { ContextMenu } from "./components/overlays/ContextMenu";
 import { Toasts } from "./components/overlays/Toasts";
+import { HistoryModal } from "./components/overlays/HistoryModal";
+import { PagePreview } from "./components/overlays/PagePreview";
 
 registerAppCommands();
 
@@ -26,7 +28,8 @@ export default function App() {
 
   useEffect(() => {
     void restoreLastVault().finally(() => setBooted(true));
-    window.addEventListener("keydown", handleGlobalKeydown);
+    // Capture phase so app shortcuts (e.g. Mod+G) take precedence over editor defaults.
+    window.addEventListener("keydown", handleGlobalKeydown, true);
     // Save as soon as the window loses focus, so switching apps never leaves edits only in memory.
     const onBlur = () => void documents.flushAll();
     window.addEventListener("blur", onBlur);
@@ -66,7 +69,7 @@ export default function App() {
       cleanups.push(() => window.removeEventListener("beforeunload", onUnload));
     }
     return () => {
-      window.removeEventListener("keydown", handleGlobalKeydown);
+      window.removeEventListener("keydown", handleGlobalKeydown, true);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onHidden);
       cleanups.forEach((c) => c());
@@ -92,6 +95,8 @@ export default function App() {
       {overlay === "palette" && <CommandPalette />}
       {overlay === "settings" && <SettingsModal />}
       {overlay === "shortcuts" && <ShortcutsModal />}
+      {info && <HistoryModal />}
+      {info && <PagePreview />}
       <Dialogs />
       <ContextMenu />
       <Toasts />

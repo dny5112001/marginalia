@@ -50,6 +50,8 @@ interface UiStore {
   overlay: Overlay;
   contextMenu: { x: number; y: number; items: ContextMenuItem[] } | null;
   searchFocusTick: number;
+  /** Note whose local history is shown, or null. */
+  historyPath: string | null;
   toast(message: string, kind?: Toast["kind"]): void;
   dismissToast(id: number): void;
   setOverlay(o: Overlay): void;
@@ -67,6 +69,7 @@ export const useUi = create<UiStore>((set, get) => ({
   overlay: null,
   contextMenu: null,
   searchFocusTick: 0,
+  historyPath: null,
   toast(message, kind = "info") {
     const id = ++toastSeq;
     set({ toasts: [...get().toasts.slice(-3), { id, kind, message }] });

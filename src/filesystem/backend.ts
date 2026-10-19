@@ -41,6 +41,8 @@ export interface VaultBackend {
   writeText(path: string, content: string, expectedMtime?: number): Promise<number>;
   /** Creates a new file; fails with `alreadyExists` rather than overwriting. */
   createFile(path: string, content: string): Promise<number>;
+  /** Creates a new binary file from base64 data; fails with `alreadyExists` rather than overwriting. */
+  createBinary(path: string, base64: string): Promise<void>;
   createFolder(path: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   /** Moves to the OS trash (or `.trash` in the vault). */

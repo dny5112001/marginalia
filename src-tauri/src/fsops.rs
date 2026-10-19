@@ -170,6 +170,29 @@ pub fn create_file(root: &Path, rel: &str, content: &str) -> AppResult<u64> {
     Ok(mtime_ms(&meta))
 }
 
+/// Create a new binary file (attachments); never overwrites.
+pub fn create_binary(root: &Path, rel: &str, bytes: &[u8]) -> AppResult<()> {
+    if bytes.len() as u64 > MAX_BINARY_BYTES * 4 {
+        return Err(AppError::TooLarge(rel.to_string()));
+    }
+    let abs = resolve(root, rel)?;
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::from_io(e, rel))?;
+    }
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&abs)
+        .map_err(|e| AppError::from_io(e, rel))?;
+    let res = f.write_all(bytes).and_then(|_| f.sync_all());
+    if let Err(e) = res {
+        drop(f);
+        let _ = fs::remove_file(&abs);
+        return Err(AppError::from_io(e, rel));
+    }
+    Ok(())
+}
+
 pub fn create_folder(root: &Path, rel: &str) -> AppResult<()> {
     let abs = resolve(root, rel)?;
     if abs.exists() {
@@ -239,6 +262,16 @@ mod tests {
         let leftovers: Vec<_> = fs::read_dir(root.join("notes")).unwrap().flatten()
             .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).collect();
         assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn binary_create_never_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        create_binary(root, "att/img.png", &[1, 2, 3]).unwrap();
+        assert!(matches!(create_binary(root, "att/img.png", &[9]), Err(AppError::AlreadyExists(_))));
+        assert_eq!(read_binary(root, "att/img.png").unwrap(), vec![1, 2, 3]);
+        assert!(matches!(create_binary(root, "../escape.png", &[1]), Err(AppError::OutsideVault(_))));
     }
 
     #[test]

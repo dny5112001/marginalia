@@ -2,15 +2,32 @@ import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { createExtensions, reconfigure, type EditorHooks } from "../../editor/setup";
+import { createExtensions, reconfigure, type EditorHooks, type EditorOptions } from "../../editor/setup";
+import { loadVaultImage } from "../../markdown/images";
+import type { Settings } from "../../types";
 import { setActiveEditor } from "../../editor/activeEditor";
-import { documents, followLink, vaultIndex } from "../../vault/store";
+import { documents, followLink, saveAttachment, vaultIndex } from "../../vault/store";
+import { toast } from "../../features/ui/store";
+
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
 import { useSettings } from "../../settings/store";
 import { useDoc } from "../../hooks/useDoc";
 import { useStatus } from "../../features/status/store";
 import { isTauri } from "../../filesystem";
-import { headingSlug } from "../../links/parse";
+import { extractFrontmatter, headingSlug } from "../../links/parse";
 import { dirname, noteTitle } from "../../vault/paths";
+
+const editorOptions = (s: Settings): EditorOptions => ({
+  lineNumbers: s.lineNumbers,
+  wrap: s.lineWrapping,
+  fontSize: s.editorFontSize,
+  livePreview: s.livePreview,
+});
 
 /** Editor states are cached per path so switching tabs keeps undo history, selection and scroll. */
 const stateCache = new Map<string, { state: EditorState; hooks: { current: EditorHooks }; scroll: number }>();
@@ -64,6 +81,19 @@ export function MarkdownEditor({ path, active }: { path: string; active: boolean
         const resolved = target ? vaultIndex.resolveTarget(target, path) : path;
         return resolved ? (vaultIndex.get(resolved)?.headings.map((h) => h.text) ?? []) : [];
       },
+      loadImage: (target, kind) => loadVaultImage(target, kind, path),
+      onFiles: async (files) => {
+        const out: string[] = [];
+        for (const f of files) {
+          if (f.size > 100 * 1024 * 1024) {
+            toast(`"${f.name}" is larger than 100 MB and was not added.`, "error");
+            continue;
+          }
+          const md = await saveAttachment(path, { name: f.name, type: f.type, base64: await fileToBase64(f) });
+          if (md) out.push(md);
+        }
+        return out;
+      },
       onSave: () => void documents.save(path),
     };
     const cached = stateCache.get(path);
@@ -81,22 +111,27 @@ export function MarkdownEditor({ path, active }: { path: string; active: boolean
         onFollowLink: (l, n) => ref.current.onFollowLink(l, n),
         noteNames: () => ref.current.noteNames(),
         headingsFor: (t) => ref.current.headingsFor(t),
+        loadImage: (t, k) => ref.current.loadImage(t, k),
+        onFiles: (f) => ref.current.onFiles!(f),
         onSave: () => ref.current.onSave(),
       };
       const s = useSettings.getState().settings;
+      // Start below the frontmatter, which Live Preview shows as the Properties block.
+      const fmEnd = s.livePreview ? (extractFrontmatter(d.content)?.end ?? 0) : 0;
       state = EditorState.create({
         doc: d.content,
-        extensions: createExtensions(proxy, { lineNumbers: s.lineNumbers, wrap: s.lineWrapping, fontSize: s.editorFontSize }),
+        selection: { anchor: Math.min(fmEnd, d.content.length) },
+        extensions: createExtensions(proxy, editorOptions(s)),
       });
     }
     const view = new EditorView({ state, parent: host.current });
     viewRef.current = view;
     appliedRev.current = d.externalRev;
-    const s = useSettings.getState().settings;
-    reconfigure(view, { lineNumbers: s.lineNumbers, wrap: s.lineWrapping, fontSize: s.editorFontSize });
-    if (cached) requestAnimationFrame(() => (view.scrollDOM.scrollTop = cached.scroll));
+    reconfigure(view, editorOptions(useSettings.getState().settings), hooksRef.current!.current);
+    const scroller = host.current.closest(".pane-scroll");
+    if (cached && scroller) requestAnimationFrame(() => (scroller.scrollTop = cached.scroll));
     return () => {
-      stateCache.set(path, { state: view.state, hooks: hooksRef.current!, scroll: view.scrollDOM.scrollTop });
+      stateCache.set(path, { state: view.state, hooks: hooksRef.current!, scroll: scroller?.scrollTop ?? 0 });
       setActiveEditor(null);
       view.destroy();
       viewRef.current = null;
@@ -116,8 +151,10 @@ export function MarkdownEditor({ path, active }: { path: string; active: boolean
 
   useEffect(() => {
     const view = viewRef.current;
-    if (view) reconfigure(view, { lineNumbers: settings.lineNumbers, wrap: settings.lineWrapping, fontSize: settings.editorFontSize });
-  }, [settings.lineNumbers, settings.lineWrapping, settings.editorFontSize, ready]);
+    if (!view || !hooksRef.current) return;
+    reconfigure(view, editorOptions(settings), hooksRef.current.current);
+    view.contentDOM.spellcheck = settings.spellcheck;
+  }, [settings, ready]);
 
   useEffect(() => {
     const view = viewRef.current;

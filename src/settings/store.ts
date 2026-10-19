@@ -7,6 +7,9 @@ export const DEFAULT_SETTINGS: Settings = {
   editorFontSize: 15,
   lineNumbers: false,
   lineWrapping: true,
+  livePreview: true,
+  readableLineLength: true,
+  spellcheck: true,
   autosaveDelayMs: 800,
   newNoteFolder: "",
   attachmentFolder: "",
@@ -15,6 +18,13 @@ export const DEFAULT_SETTINGS: Settings = {
   templatesFolder: "Templates",
   updateLinksOnRename: true,
   defaultViewMode: "edit",
+  historyEnabled: true,
+  historyIntervalMin: 5,
+  historyKeepDays: 7,
+  confirmDelete: true,
+  newNoteLocation: "folder",
+  dailyNoteFormat: "YYYY-MM-DD",
+  dailyNoteTemplate: "",
 };
 
 const KEY = "marginalia:settings";
@@ -28,6 +38,7 @@ export function sanitizeSettings(raw: unknown): Settings {
   if (typeof r.editorFontSize === "number" && r.editorFontSize >= 10 && r.editorFontSize <= 28) s.editorFontSize = r.editorFontSize;
   if (typeof r.lineNumbers === "boolean") s.lineNumbers = r.lineNumbers;
   if (typeof r.lineWrapping === "boolean") s.lineWrapping = r.lineWrapping;
+  for (const k of ["livePreview", "readableLineLength", "spellcheck"] as const) if (typeof r[k] === "boolean") s[k] = r[k] as boolean;
   if (typeof r.autosaveDelayMs === "number" && r.autosaveDelayMs >= 200 && r.autosaveDelayMs <= 10000) s.autosaveDelayMs = r.autosaveDelayMs;
   for (const k of ["newNoteFolder", "attachmentFolder", "dailyNoteFolder", "templatesFolder"] as const) {
     if (typeof r[k] === "string" && !(r[k] as string).includes("..")) s[k] = (r[k] as string).replace(/^\/+|\/+$/g, "");
@@ -35,6 +46,13 @@ export function sanitizeSettings(raw: unknown): Settings {
   if (typeof r.dailyNotesEnabled === "boolean") s.dailyNotesEnabled = r.dailyNotesEnabled;
   if (typeof r.updateLinksOnRename === "boolean") s.updateLinksOnRename = r.updateLinksOnRename;
   if (r.defaultViewMode === "edit" || r.defaultViewMode === "preview" || r.defaultViewMode === "split") s.defaultViewMode = r.defaultViewMode;
+  if (typeof r.historyEnabled === "boolean") s.historyEnabled = r.historyEnabled;
+  if (typeof r.historyIntervalMin === "number" && r.historyIntervalMin >= 0 && r.historyIntervalMin <= 1440) s.historyIntervalMin = r.historyIntervalMin;
+  if (typeof r.historyKeepDays === "number" && r.historyKeepDays >= 1 && r.historyKeepDays <= 3650) s.historyKeepDays = r.historyKeepDays;
+  if (typeof r.confirmDelete === "boolean") s.confirmDelete = r.confirmDelete;
+  if (r.newNoteLocation === "root" || r.newNoteLocation === "current" || r.newNoteLocation === "folder") s.newNoteLocation = r.newNoteLocation;
+  if (typeof r.dailyNoteFormat === "string" && r.dailyNoteFormat.trim() && !/[\\/:*?"<>|]/.test(r.dailyNoteFormat)) s.dailyNoteFormat = r.dailyNoteFormat.trim();
+  if (typeof r.dailyNoteTemplate === "string" && !r.dailyNoteTemplate.includes("..")) s.dailyNoteTemplate = r.dailyNoteTemplate.trim();
   return s;
 }
 

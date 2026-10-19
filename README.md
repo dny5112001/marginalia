@@ -5,8 +5,10 @@ Your vault is an ordinary folder of `.md` files — readable and editable by any
 account, no cloud, no telemetry.
 
 Functionally inspired by Obsidian's workspace model (vaults, wikilinks, backlinks, graph). All
-code, branding, icons and visuals are original. No Obsidian binary or source was analysed (it is
-not installed on the build machine), so nothing here is reverse-engineered.
+code, branding, icons and visuals are original. Obsidian 1.14.4's observable behaviour (UI, feature
+inventory, hotkeys, on-disk formats) was studied with the REA toolkit and runtime observation to
+choose features — see [docs/obsidian-analysis.md](docs/obsidian-analysis.md). No Obsidian code,
+styles, text or assets were copied.
 
 ## Run it
 
@@ -35,16 +37,20 @@ npm run test:rust        # filesystem/path-safety tests (cargo)
 | --- | --- |
 | Vaults | Open any folder, create a new vault, recent-vault list, reopen last vault on launch |
 | Files | Nested tree, create/rename/move (drag-and-drop or “Move to…”)/delete notes and folders, context menus, attachments listed, unsaved-dot, expand/collapse persisted |
-| Editor | CodeMirror 6: Markdown + GFM, fenced code highlighting, frontmatter, find & replace, undo/redo, list continuation, checklists, line numbers / wrapping / font size settings |
+| Editor | CodeMirror 6 with **Live Preview** (syntax hidden off the cursor line, clickable links, task checkboxes, inline images) or source mode; GFM, code highlighting, find & replace, undo/redo, list continuation, line numbers / wrapping / readable width / spellcheck / font size |
+| Properties | Visual frontmatter editor: typed rows, list and tag chips, add/rename/remove (Mod+;), comment-preserving YAML |
+| Attachments | Paste or drop files into a note; saved to a configurable folder and embedded, never overwriting |
+| History | Local snapshots before saves, deleted-note recovery, restore with confirmation |
+| Bookmarks | Notes, headings and searches, stored in the vault (`.marginalia/bookmarks.json`) |
 | Saving | Autosave (debounced, default 800 ms), explicit save, dirty tracking, atomic writes, conflict detection, failed-write retry + local backup, crash recovery |
 | Views | Edit, reading (rendered, sanitised), and split modes per tab |
 | Links | `[[Note]]`, `[[Note|alias]]`, `[[Note#Heading]]`, `![[image.png]]`, Markdown links; autocomplete for notes and headings; follow with Mod+Click / Mod+Enter; following a missing link creates the note; rename updates links in other notes |
-| Backlinks | Linked mentions with line context, outgoing and unresolved links, live while typing |
-| Search | Full-text across titles, paths and content; prefix + diacritic-insensitive; `tag:`, `path:`, `file:`, `"phrases"`; highlighted snippets |
+| Backlinks | Linked mentions with line context, **unlinked mentions** with one-click linking, outgoing and unresolved links, live while typing; hover page previews |
+| Search | Full-text, prefix and diacritic-insensitive; `OR`, `-exclude`, `( )`, `"phrases"`, `/regex/`, `tag:` `path:` `file:` `content:` `line:` `section:` `block:` `task:` `task-todo:` `task-done:` `[property:value]`; match case, sort, explain, copy results, bookmark search |
 | Graph | Global graph (Cytoscape) with name/tag/folder/orphan/unresolved filters; local graph with depth 1–3 |
-| Navigation | Tabs, per-tab back/forward history, quick switcher (titles + aliases, create on Enter), command palette, recent files, outline panel |
+| Navigation | Tabs (new, reopen closed, close others), per-tab back/forward, quick switcher (titles + aliases, create on Enter), command palette, recent files, outline, explorer sort/expand all/duplicate |
 | Metadata | YAML frontmatter (properties panel), inline and frontmatter tags, nested tags, tag explorer |
-| Extras | Daily notes, templates (`{{title}}`, `{{date}}`, `{{time}}`), dark / light / system theme |
+| Extras | Daily notes (custom name format, template, previous/next), templates (`{{title}}`, `{{date}}`, `{{date:FORMAT}}`, `{{time}}`), callouts, dark / light / system theme |
 
 ## Keyboard shortcuts
 
@@ -63,15 +69,18 @@ conflicts. The full list is also in Settings → Keyboard shortcuts.
 | Mod+\\ / Mod+Alt+\\ | Toggle left / right sidebar |
 | Ctrl+Tab / Ctrl+Shift+Tab, Mod+1…9 | Switch tabs |
 | Mod+W | Close tab |
+| Mod+T / Mod+Shift+T | New tab / reopen closed tab |
+| Mod+; | Add file property |
 | Mod+Shift+B | Show backlinks (then ↑/↓ to move, Enter to open) |
 | Mod+Alt+← / → | Back / forward |
 | Mod+E / Mod+Alt+E | Toggle reading view / split view |
-| Mod+Shift+G | Graph view |
-| Mod+Shift+O / E / T | Outline / file explorer / tags |
+| Mod+G | Graph view |
+| Mod+Shift+O / E | Outline / file explorer |
 | Mod+Shift+D | Today's daily note |
 | Mod+, | Settings |
 | F2 | Rename note |
-| Editor: Mod+B / I / K / L / Enter | Bold / italic / wrap in `[[link]]` / toggle checkbox / follow link |
+| Editor: Mod+B / I / K / L | Bold / italic / wrap in `[[link]]` / toggle checkbox |
+| Editor: Alt+Enter / Mod+Enter | Follow link / open link in new tab |
 | Editor: Mod+F, Mod+Alt+F | Find, find & replace |
 
 ## Architecture
@@ -154,6 +163,8 @@ thousands of notes.
 
 - Graph layout for very large vaults (>1,500 notes) falls back to a faster concentric layout.
 - Note embeds (`![[Other note]]`) render as links; only image embeds are inlined.
+- No split panes or multiple windows; no graph colour groups or force sliders.
+- Callouts render in reading view only; in Live Preview they show as styled quotes.
 - No plugin system, sync, PDF viewer, canvas, or unlinked-mention detection.
 - Checkboxes in reading view are display-only; toggle them in the editor (Mod+L).
 - Tauri end-to-end (WebDriver) tests are not set up; native flows were verified manually (below).

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { LeftView, RightView, Tab, ViewMode, WorkspaceLayout } from "../../types";
+import type { FileSort, LeftView, RightView, Tab, ViewMode, WorkspaceLayout } from "../../types";
 import { readJson, writeJson } from "../../settings/storage";
 import { dirname, isAncestor, remapPath } from "../../vault/paths";
 import { getSettings } from "../../settings/store";
@@ -18,6 +18,7 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   rightView: "backlinks",
   expandedFolders: [],
   recentFiles: [],
+  fileSort: "name-asc",
 };
 
 let tabSeq = 0;
@@ -36,7 +37,8 @@ export function sanitizeLayout(raw: unknown, exists: (p: string) => boolean): Wo
   if (typeof r.rightOpen === "boolean") l.rightOpen = r.rightOpen;
   if (typeof r.leftWidth === "number") l.leftWidth = clamp(r.leftWidth, 180, 600);
   if (typeof r.rightWidth === "number") l.rightWidth = clamp(r.rightWidth, 200, 600);
-  if (r.leftView && ["files", "search", "tags"].includes(r.leftView)) l.leftView = r.leftView;
+  if (r.leftView && ["files", "search", "tags", "bookmarks"].includes(r.leftView)) l.leftView = r.leftView;
+  if (r.fileSort && ["name-asc", "name-desc", "modified-new", "modified-old"].includes(r.fileSort)) l.fileSort = r.fileSort;
   if (r.rightView && ["backlinks", "outline", "properties", "localGraph"].includes(r.rightView)) l.rightView = r.rightView;
   if (Array.isArray(r.expandedFolders)) l.expandedFolders = r.expandedFolders.filter((p) => typeof p === "string");
   if (Array.isArray(r.recentFiles)) l.recentFiles = r.recentFiles.filter((p) => typeof p === "string" && exists(p)).slice(0, RECENT_CAP);
@@ -44,8 +46,8 @@ export function sanitizeLayout(raw: unknown, exists: (p: string) => boolean): Wo
     for (const t of r.tabs) {
       if (!t || typeof t !== "object") continue;
       const mode: ViewMode = t.mode === "preview" || t.mode === "split" ? t.mode : "edit";
-      if (t.kind === "graph") {
-        l.tabs.push({ ...makeTab(undefined, mode, "graph"), id: typeof t.id === "string" ? t.id : newId() });
+      if (t.kind === "graph" || t.kind === "empty") {
+        l.tabs.push({ ...makeTab(undefined, mode, t.kind), id: typeof t.id === "string" ? t.id : newId() });
         continue;
       }
       if (typeof t.path !== "string" || !exists(t.path)) continue;
@@ -71,6 +73,12 @@ function clamp(n: number, lo: number, hi: number) {
 
 interface WorkspaceStore extends WorkspaceLayout {
   vaultKey: string | null;
+  /** Recently closed tabs, most recent last (not persisted). */
+  closedTabs: Tab[];
+  newTab(): void;
+  reopenClosedTab(): void;
+  closeOtherTabs(id: string): void;
+  setFileSort(sort: FileSort): void;
   load(vaultKey: string, exists: (p: string) => boolean): void;
   reset(): void;
   openNote(path: string, opts?: { newTab?: boolean; mode?: ViewMode }): void;
@@ -98,8 +106,8 @@ interface WorkspaceStore extends WorkspaceLayout {
 const storageKey = (vault: string) => `marginalia:workspace:${vault}`;
 
 export function layoutOf(s: WorkspaceLayout): WorkspaceLayout {
-  const { tabs, activeTabId, leftOpen, rightOpen, leftWidth, rightWidth, leftView, rightView, expandedFolders, recentFiles } = s;
-  return { tabs, activeTabId, leftOpen, rightOpen, leftWidth, rightWidth, leftView, rightView, expandedFolders, recentFiles };
+  const { tabs, activeTabId, leftOpen, rightOpen, leftWidth, rightWidth, leftView, rightView, expandedFolders, recentFiles, fileSort } = s;
+  return { tabs, activeTabId, leftOpen, rightOpen, leftWidth, rightWidth, leftView, rightView, expandedFolders, recentFiles, fileSort };
 }
 
 export const useWorkspace = create<WorkspaceStore>((set, get) => {
@@ -111,13 +119,38 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => {
   return {
     ...DEFAULT_LAYOUT,
     vaultKey: null,
+    closedTabs: [],
 
     load(vaultKey, exists) {
-      set({ ...sanitizeLayout(readJson(storageKey(vaultKey)), exists), vaultKey });
+      set({ ...sanitizeLayout(readJson(storageKey(vaultKey)), exists), vaultKey, closedTabs: [] });
     },
     reset() {
-      set({ ...DEFAULT_LAYOUT, vaultKey: null });
+      set({ ...DEFAULT_LAYOUT, vaultKey: null, closedTabs: [] });
     },
+
+    newTab() {
+      const s = get();
+      const tab = makeTab(undefined, "edit", "empty");
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      const tabs = [...s.tabs];
+      tabs.splice(idx + 1, 0, tab);
+      set({ tabs, activeTabId: tab.id });
+    },
+
+    reopenClosedTab() {
+      const s = get();
+      const tab = s.closedTabs[s.closedTabs.length - 1];
+      if (!tab) return;
+      set({ tabs: [...s.tabs, tab], activeTabId: tab.id, closedTabs: s.closedTabs.slice(0, -1) });
+    },
+
+    closeOtherTabs(id) {
+      const s = get();
+      const closed = s.tabs.filter((t) => t.id !== id && t.kind === "note");
+      set({ tabs: s.tabs.filter((t) => t.id === id), activeTabId: id, closedTabs: [...s.closedTabs, ...closed].slice(-20) });
+    },
+
+    setFileSort: (fileSort) => set({ fileSort }),
 
     activeTab() {
       const s = get();
@@ -137,10 +170,10 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => {
           return;
         }
         const active = s.activeTab();
-        if (active && active.kind === "note") {
+        if (active && (active.kind === "note" || active.kind === "empty")) {
           patchTab(active.id, (t) => {
             const history = [...t.history.slice(0, t.historyIndex + 1), path].slice(-HISTORY_CAP);
-            return { ...t, path, history, historyIndex: history.length - 1, mode: mode ?? t.mode };
+            return { ...t, kind: "note", path, history, historyIndex: history.length - 1, mode: mode ?? (t.kind === "empty" ? getSettings().defaultViewMode : t.mode) };
           });
           return;
         }
@@ -164,9 +197,11 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => {
       const s = get();
       const idx = s.tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
+      const closing = s.tabs[idx];
       const tabs = s.tabs.filter((t) => t.id !== id);
       const activeTabId = s.activeTabId === id ? (tabs[Math.min(idx, tabs.length - 1)]?.id ?? null) : s.activeTabId;
-      set({ tabs, activeTabId });
+      const closedTabs = closing.kind === "note" ? [...s.closedTabs, closing].slice(-20) : s.closedTabs;
+      set({ tabs, activeTabId, closedTabs });
     },
 
     activateTab(id) {
@@ -244,6 +279,7 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => {
       const remap = (p: string) => remapPath(p, from, to);
       set({
         tabs: s.tabs.map((t) => ({ ...t, path: t.path && remap(t.path), history: t.history.map(remap) })),
+        closedTabs: s.closedTabs.map((t) => ({ ...t, path: t.path && remap(t.path), history: t.history.map(remap) })),
         recentFiles: s.recentFiles.map(remap),
         expandedFolders: s.expandedFolders.map(remap),
       });
@@ -265,6 +301,7 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => {
         });
       }
       set({
+        closedTabs: get().closedTabs.filter((t) => !gone(t.path)),
         recentFiles: get().recentFiles.filter((p) => !gone(p)),
         expandedFolders: get().expandedFolders.filter((p) => !gone(p)),
       });

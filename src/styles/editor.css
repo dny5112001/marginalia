@@ -1,6 +1,14 @@
 /* CodeMirror theme, driven entirely by design tokens. */
-.editor-pane {
+.editor-pane,
+.preview-pane {
   overflow: hidden;
+}
+.pane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 .title-input {
   flex: none;
@@ -21,8 +29,7 @@
   max-width: none;
 }
 .editor-host {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
   display: flex;
 }
 .editor-host .cm-editor {
@@ -37,7 +44,7 @@
 .editor-host .cm-scroller {
   font-family: var(--font-text);
   line-height: 1.65;
-  overflow: auto;
+  overflow: visible;
 }
 .editor-host .cm-content {
   max-width: 760px;
@@ -239,4 +246,184 @@
 /* Frontmatter block */
 .editor-host .cm-line:has(.md-meta:only-child) {
   font-family: var(--font-mono);
+}
+
+/* ───────────── Live Preview ───────────── */
+.cm-live-preview .cm-lp-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.cm-live-preview .cm-lp-link:hover {
+  text-decoration-color: var(--accent);
+}
+.cm-live-preview .cm-lp-link.unresolved {
+  opacity: 0.65;
+}
+.cm-lp-task {
+  width: 15px;
+  height: 15px;
+  margin: 0 6px 0 0;
+  vertical-align: -2px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cm-lp-done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.cm-lp-bullet {
+  display: inline-block;
+  width: 1ch;
+  color: var(--text-muted);
+}
+.cm-lp-hr {
+  display: inline-block;
+  width: 100%;
+  border-top: 1px solid var(--border-strong);
+  vertical-align: middle;
+}
+.cm-line.cm-lp-quote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px !important;
+  color: var(--text-muted);
+}
+.cm-lp-image img {
+  max-width: 100%;
+  border-radius: var(--radius);
+  display: block;
+  margin: 4px 0;
+}
+.cm-lp-image.missing {
+  color: var(--text-faint);
+  font-size: 0.85em;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+.cm-live-preview .md-code {
+  padding: 0.1em 0.3em;
+}
+
+/* Readable line length off: let text use the full pane width. */
+.note-body.full-width .editor-host .cm-content,
+.note-body.full-width .title-input,
+.note-body.full-width .markdown-preview,
+.note-body.full-width .preview-title,
+.note-body.full-width .properties {
+  max-width: none;
+}
+
+/* ───────────── Properties ───────────── */
+.properties {
+  width: 100%;
+  max-width: 760px;
+  margin: 10px auto 4px;
+  padding: 0 28px;
+  font-size: 13px;
+}
+.properties.invalid {
+  color: var(--danger);
+}
+.properties-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+.prop-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 30%) 1fr 26px;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border-radius: var(--radius-sm);
+}
+.prop-row:hover {
+  background: var(--bg-hover);
+}
+.prop-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  padding-left: 6px;
+  min-width: 0;
+}
+.prop-key-input,
+.prop-input,
+.prop-chip-input {
+  border: 0;
+  background: transparent;
+  min-width: 0;
+  width: 100%;
+  padding: 4px 2px;
+}
+.prop-key-input {
+  color: var(--text-muted);
+}
+.prop-key-input:focus,
+.prop-input:focus {
+  outline: 1px solid var(--accent);
+  border-radius: 3px;
+}
+.prop-value {
+  min-width: 0;
+}
+.prop-remove {
+  opacity: 0;
+}
+.prop-row:hover .prop-remove,
+.prop-remove:focus-visible {
+  opacity: 1;
+}
+.prop-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  cursor: text;
+}
+.prop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 10px;
+  background: var(--bg-active);
+}
+.prop-chip.tag {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.prop-chip button {
+  display: inline-flex;
+  opacity: 0.6;
+  padding: 2px;
+}
+.prop-chip button:hover {
+  opacity: 1;
+}
+.prop-chip-input {
+  width: auto;
+  flex: 1;
+  min-width: 60px;
+}
+.prop-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  padding: 6px;
+}
+.prop-add:hover {
+  color: var(--text);
+}
+.mode-split .properties {
+  max-width: none;
 }

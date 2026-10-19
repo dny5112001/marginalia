@@ -1,53 +1,31 @@
 import type { SearchHit } from "../types";
+import { candidateTerms, highlightNeedles, matchQuery, normalize, parseSearch, regexSources } from "./query";
+
+export { normalize };
 
 /**
- * Local full-text search: an inverted index over note titles and bodies.
- * Supports multiple terms (AND), prefix matching on every term, quoted
- * phrases, and the filters `tag:foo`, `path:folder`, `file:name`.
+ * Local full-text search: an inverted index over note titles and bodies picks
+ * candidates, then the query language in `query.ts` verifies each one.
  */
 
 export function tokenize(text: string): string[] {
   return normalize(text).match(/[\p{L}\p{N}_]+/gu) ?? [];
 }
 
-export function normalize(text: string): string {
-  return text.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase();
-}
 
 interface DocEntry {
   title: string;
   content: string;
   tags: string[];
+  props: Record<string, unknown> | null;
   termCount: number;
   terms: string[];
 }
 
-export interface ParsedQuery {
-  terms: string[];
-  phrases: string[];
-  tags: string[];
-  paths: string[];
-  files: string[];
-}
-
-export function parseQuery(query: string): ParsedQuery {
-  const q: ParsedQuery = { terms: [], phrases: [], tags: [], paths: [], files: [] };
-  const re = /(\w+):"([^"]*)"|(\w+):(\S+)|"([^"]+)"|(#[\p{L}\p{N}_\-/]+)|(\S+)/gu;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(query))) {
-    const key = (m[1] ?? m[3])?.toLowerCase();
-    const val = m[2] ?? m[4];
-    if (key === "tag") q.tags.push(val.replace(/^#/, "").toLowerCase());
-    else if (key === "path") q.paths.push(normalize(val));
-    else if (key === "file") q.files.push(normalize(val));
-    else if (m[5]) q.phrases.push(normalize(m[5]));
-    else if (m[6]) q.tags.push(m[6].slice(1).toLowerCase());
-    else {
-      const raw = key ? `${key}:${val}` : m[7];
-      q.terms.push(...tokenize(raw));
-    }
-  }
-  return q;
+export interface SearchOptions {
+  limit?: number;
+  matchCase?: boolean;
+  sort?: "relevance" | "name-asc" | "name-desc" | "path";
 }
 
 export class SearchIndex {
@@ -67,7 +45,7 @@ export class SearchIndex {
     this.sortedTerms = null;
   }
 
-  add(path: string, title: string, content: string, tags: string[] = []) {
+  add(path: string, title: string, content: string, tags: string[] = [], props: Record<string, unknown> | null = null) {
     this.remove(path);
     const tokens = tokenize(content);
     const counts = new Map<string, number>();
@@ -83,7 +61,7 @@ export class SearchIndex {
       p.set(path, c);
     }
     this.titleTokens.set(path, titleToks);
-    this.docs.set(path, { title, content, tags, termCount: tokens.length, terms: [...counts.keys()] });
+    this.docs.set(path, { title, content, tags, props, termCount: tokens.length, terms: [...counts.keys()] });
   }
 
   remove(path: string) {
@@ -115,17 +93,13 @@ export class SearchIndex {
     return out;
   }
 
-  search(query: string, limit = 100): SearchHit[] {
-    const q = parseQuery(query);
-    if (!q.terms.length && !q.phrases.length && !q.tags.length && !q.paths.length && !q.files.length) return [];
-
-    let candidates: Map<string, number> | null = null;
-    const matchedTerms: string[] = [];
-    for (const term of q.terms) {
+  /** Score of `term` (a raw query word) for each document containing all of its tokens as prefixes. */
+  private termScores(term: string): Map<string, number> {
+    let result: Map<string, number> | null = null;
+    for (const tok of tokenize(term)) {
       const scores = new Map<string, number>();
-      for (const full of this.expand(term)) {
-        matchedTerms.push(full);
-        const exact = full === term ? 1 : 0.6;
+      for (const full of this.expand(tok)) {
+        const exact = full === tok ? 1 : 0.6;
         for (const [path, count] of this.postings.get(full)!) {
           const titleBoost = this.titleTokens.get(path)?.has(full) ? 4 : 1;
           const doc = this.docs.get(path)!;
@@ -133,38 +107,62 @@ export class SearchIndex {
           scores.set(path, (scores.get(path) ?? 0) + (tf * 10 + 1) * exact * titleBoost);
         }
       }
-      if (!candidates) candidates = scores;
+      if (!result) result = scores;
       else {
         const next = new Map<string, number>();
-        for (const [p, s] of candidates) {
-          const add = scores.get(p);
-          if (add !== undefined) next.set(p, s + add);
-        }
-        candidates = next;
+        for (const [p, s] of result) if (scores.has(p)) next.set(p, s + scores.get(p)!);
+        result = next;
       }
-      if (candidates.size === 0) return [];
     }
-    if (!candidates) candidates = new Map([...this.docs.keys()].map((p) => [p, 1]));
+    return result ?? new Map();
+  }
 
-    const ranked: { path: string; score: number }[] = [];
-    for (const [path, score] of candidates) {
-      const doc = this.docs.get(path)!;
-      const lowerPath = normalize(path);
-      if (q.paths.length && !q.paths.every((p) => lowerPath.includes(p))) continue;
-      if (q.files.length && !q.files.every((f) => normalize(doc.title).includes(f))) continue;
-      if (q.tags.length && !q.tags.every((t) => doc.tags.some((x) => x === t || x.startsWith(t + "/")))) continue;
-      if (q.phrases.length) {
-        const normContent = normalize(doc.content);
-        if (!q.phrases.every((ph) => normContent.includes(ph) || normalize(doc.title).includes(ph))) continue;
+  search(query: string, opts: SearchOptions | number = {}): SearchHit[] {
+    const { limit = 100, matchCase = false, sort = "relevance" } = typeof opts === "number" ? { limit: opts } : opts;
+    const q = parseSearch(query);
+    if (q.length === 0) return [];
+
+    // 1. Candidates: union over OR-groups; groups with positive words use the inverted index.
+    const scored = new Map<string, number>();
+    for (const words of candidateTerms(q)) {
+      if (!words) {
+        for (const p of this.docs.keys()) if (!scored.has(p)) scored.set(p, 1);
+        continue;
       }
-      ranked.push({ path, score: score + (q.phrases.length ? 5 : 0) });
+      let group: Map<string, number> | null = null;
+      for (const w of words) {
+        const s = this.termScores(w);
+        if (!group) group = s;
+        else {
+          const next = new Map<string, number>();
+          for (const [p, v] of group) if (s.has(p)) next.set(p, v + s.get(p)!);
+          group = next;
+        }
+        if (group.size === 0) break;
+      }
+      for (const [p, v] of group ?? []) scored.set(p, Math.max(scored.get(p) ?? 0, v));
     }
-    ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-    // Snippets are comparatively expensive, so only build them for returned hits.
-    const needles = [...q.phrases, ...new Set(matchedTerms)];
+
+    // 2. Verify every candidate against the full query (phrases, scopes, exclusions, regex…).
+    const ranked: { path: string; score: number }[] = [];
+    for (const [path, score] of scored) {
+      const doc = this.docs.get(path)!;
+      if (matchQuery(q, { title: doc.title, path, content: doc.content, tags: doc.tags, props: doc.props, matchCase })) ranked.push({ path, score });
+    }
+    ranked.sort((a, b) => {
+      const byName = this.docs.get(a.path)!.title.localeCompare(this.docs.get(b.path)!.title, undefined, { numeric: true, sensitivity: "base" });
+      if (sort === "name-asc") return byName || a.path.localeCompare(b.path);
+      if (sort === "name-desc") return -byName || b.path.localeCompare(a.path);
+      if (sort === "path") return a.path.localeCompare(b.path);
+      return b.score - a.score || a.path.localeCompare(b.path);
+    });
+
+    // 3. Snippets only for returned hits; they are comparatively expensive.
+    const needles = highlightNeedles(q).map((n) => (matchCase ? n : normalize(n)));
+    const regexes = regexSources(q);
     return ranked.slice(0, limit).map(({ path, score }) => {
       const doc = this.docs.get(path)!;
-      return { path, title: doc.title, score, snippets: makeSnippets(doc.content, needles) };
+      return { path, title: doc.title, score, snippets: makeSnippets(doc.content, needles, 3, 60, regexes, matchCase) };
     });
   }
 }
@@ -173,13 +171,13 @@ export class SearchIndex {
  * Build up to 3 snippets around matches. Matching runs on a normalized copy;
  * because NFKD can change lengths, we map offsets via a per-char index.
  */
-export function makeSnippets(content: string, needles: string[], max = 3, radius = 60) {
+export function makeSnippets(content: string, needles: string[], max = 3, radius = 60, regexes: string[] = [], matchCase = false) {
   const out: { text: string; ranges: [number, number][] }[] = [];
-  if (!needles.length) {
+  if (!needles.length && !regexes.length) {
     const text = content.replace(/^---[\s\S]*?\n---\s*/, "").slice(0, radius * 2).trim();
     return text ? [{ text, ranges: [] }] : [];
   }
-  const { norm, map } = normalizeWithMap(content);
+  const { norm, map } = matchCase ? { norm: content, map: [...content].map((_, i) => i).concat(content.length) } : normalizeWithMap(content);
   const uniq = [...new Set(needles.filter(Boolean))].sort((a, b) => b.length - a.length);
   const positions: [number, number][] = [];
   for (const n of uniq) {
@@ -190,6 +188,23 @@ export function makeSnippets(content: string, needles: string[], max = 3, radius
       const prev = norm[i - 1];
       if (!prev || !/[\p{L}\p{N}_]/u.test(prev)) positions.push([map[i], map[i + n.length - 1] + 1]);
       i = norm.indexOf(n, i + n.length);
+    }
+  }
+  for (const src of regexes) {
+    let re: RegExp;
+    try {
+      re = new RegExp(src, matchCase ? "gmu" : "gimu");
+    } catch {
+      continue;
+    }
+    let m: RegExpExecArray | null;
+    let guard = 0;
+    while ((m = re.exec(content)) && guard++ < 50) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      positions.push([m.index, m.index + m[0].length]);
     }
   }
   positions.sort((a, b) => a[0] - b[0]);

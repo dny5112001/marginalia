@@ -48,6 +48,23 @@ describe("workspace", () => {
     expect(useWorkspace.getState().activeTab()!.path).toBe("a.md");
   });
 
+  it("opens empty tabs, fills them, and reopens closed tabs", () => {
+    const ws = useWorkspace.getState();
+    ws.openNote("a.md");
+    ws.newTab();
+    expect(useWorkspace.getState().activeTab()!.kind).toBe("empty");
+    ws.openNote("b.md");
+    expect(useWorkspace.getState().tabs.map((t) => [t.kind, t.path])).toEqual([["note", "a.md"], ["note", "b.md"]]);
+    ws.closeTab(useWorkspace.getState().activeTabId!);
+    expect(useWorkspace.getState().tabs).toHaveLength(1);
+    ws.reopenClosedTab();
+    expect(useWorkspace.getState().activeTab()!.path).toBe("b.md");
+    ws.closeOtherTabs(useWorkspace.getState().activeTabId!);
+    expect(useWorkspace.getState().tabs.map((t) => t.path)).toEqual(["b.md"]);
+    ws.reopenClosedTab();
+    expect(useWorkspace.getState().tabs.map((t) => t.path)).toEqual(["b.md", "a.md"]);
+  });
+
   it("remaps paths on rename and prunes them on delete", () => {
     const ws = useWorkspace.getState();
     ws.openNote("f/d.md");

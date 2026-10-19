@@ -1,7 +1,8 @@
-import { ArrowLeft, ArrowRight, PanelLeft, PanelRight, Plus, X, Network, FileText } from "lucide-react";
+import { ArrowLeft, ArrowRight, PanelLeft, PanelRight, Plus, X, Network, FileText, File } from "lucide-react";
 import { useWorkspace } from "../../features/workspace/store";
 import { useDoc } from "../../hooks/useDoc";
-import { createNote, documents } from "../../vault/store";
+import { documents } from "../../vault/store";
+import { useUi } from "../../features/ui/store";
 import { closeActiveTab } from "../../commands/appCommands";
 import { formatShortcut, isMac } from "../../commands/registry";
 import { noteTitle } from "../../vault/paths";
@@ -42,7 +43,7 @@ export function TopBar() {
             }}
           />
         ))}
-        <button className="icon-btn new-tab" onClick={() => void createNote(undefined, "Untitled", "", { newTab: true })} title="New note in new tab" aria-label="New note in new tab">
+        <button className="icon-btn new-tab" onClick={() => useWorkspace.getState().newTab()} title={`New tab (${formatShortcut("Mod+T")})`} aria-label="New tab">
           <Plus size={15} />
         </button>
         <div className="tabstrip-fill" data-tauri-drag-region />
@@ -59,7 +60,7 @@ export function TopBar() {
 function TabButton({ tab, active, onActivate, onClose }: { tab: Tab; active: boolean; onActivate: () => void; onClose: () => void }) {
   const doc = useDoc(tab.path);
   const dirty = !!tab.path && !!doc && documents.isDirty(tab.path);
-  const title = tab.kind === "graph" ? "Graph view" : noteTitle(tab.path ?? "");
+  const title = tab.kind === "graph" ? "Graph view" : tab.kind === "empty" ? "New tab" : noteTitle(tab.path ?? "");
   return (
     <div
       className={`tab ${active ? "active" : ""}`}
@@ -74,11 +75,21 @@ function TabButton({ tab, active, onActivate, onClose }: { tab: Tab; active: boo
         }
       }}
       onClick={onActivate}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const ws = useWorkspace.getState();
+        useUi.getState().openContextMenu(e.clientX, e.clientY, [
+          { label: "Close", shortcut: "Mod+W", run: onClose },
+          { label: "Close other tabs", disabled: ws.tabs.length < 2, run: () => ws.closeOtherTabs(tab.id) },
+          { label: "Reopen closed tab", shortcut: "Mod+Shift+T", disabled: !ws.closedTabs.length, run: () => ws.reopenClosedTab() },
+          ...(tab.path ? [{ label: "", separator: true }, { label: "Copy path", run: () => void navigator.clipboard?.writeText(tab.path!) }] : []),
+        ]);
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") onActivate();
       }}
     >
-      {tab.kind === "graph" ? <Network size={13} /> : <FileText size={13} />}
+      {tab.kind === "graph" ? <Network size={13} /> : tab.kind === "empty" ? <File size={13} /> : <FileText size={13} />}
       <span className="tab-title">{title}</span>
       {doc?.status === "error" || doc?.status === "conflict" ? <span className="tab-dot error" aria-label="Save problem" /> : dirty ? <span className="tab-dot" aria-label="Unsaved changes" /> : null}
       <button

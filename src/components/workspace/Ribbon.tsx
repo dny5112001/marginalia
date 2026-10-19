@@ -1,4 +1,4 @@
-import { Files, Search, Hash, Network, CalendarDays, Command, Settings, FolderOpen } from "lucide-react";
+import { Files, Search, Hash, Network, CalendarDays, Command, Settings, FolderOpen, Bookmark } from "lucide-react";
 import { useWorkspace } from "../../features/workspace/store";
 import { runCommand, formatShortcut, getCommand } from "../../commands/registry";
 import { useSettings } from "../../settings/store";
@@ -22,6 +22,7 @@ export function Ribbon() {
       {item(`Files${sc("nav.files")}`, Files, view("files"), leftOpen && leftView === "files")}
       {item(`Search${sc("nav.search")}`, Search, () => runCommand("nav.search"), leftOpen && leftView === "search")}
       {item(`Tags${sc("nav.tags")}`, Hash, view("tags"), leftOpen && leftView === "tags")}
+      {item("Bookmarks", Bookmark, view("bookmarks"), leftOpen && leftView === "bookmarks")}
       {item(`Graph view${sc("nav.graph")}`, Network, () => runCommand("nav.graph"))}
       {daily && item(`Today's daily note${sc("daily.open")}`, CalendarDays, () => runCommand("daily.open"))}
       {item(`Command palette${sc("nav.palette")}`, Command, () => runCommand("nav.palette"))}

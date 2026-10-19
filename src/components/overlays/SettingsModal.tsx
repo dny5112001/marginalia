@@ -4,6 +4,7 @@ import { useUi } from "../../features/ui/store";
 import { useSettings } from "../../settings/store";
 import { allCommands, formatShortcut } from "../../commands/registry";
 import type { ThemeMode, ViewMode } from "../../types";
+import { formatDate } from "../../vault/dates";
 
 type Section = "appearance" | "editor" | "files" | "shortcuts" | "about";
 
@@ -100,6 +101,15 @@ function EditorSettings() {
           ))}
         </select>
       </Row>
+      <Row label="Live Preview" desc="Hide Markdown syntax except on the line you're editing. Turn off for plain source mode.">
+        <Toggle label="Live Preview" checked={settings.livePreview} onChange={(v) => update({ livePreview: v })} />
+      </Row>
+      <Row label="Readable line length" desc="Limit the maximum line width for easier reading.">
+        <Toggle label="Readable line length" checked={settings.readableLineLength} onChange={(v) => update({ readableLineLength: v })} />
+      </Row>
+      <Row label="Spellcheck">
+        <Toggle label="Spellcheck" checked={settings.spellcheck} onChange={(v) => update({ spellcheck: v })} />
+      </Row>
       <Row label="Default view for new tabs">
         <select className="input" value={settings.defaultViewMode} onChange={(e) => update({ defaultViewMode: e.target.value as ViewMode })} aria-label="Default view mode">
           <option value="edit">Editing</option>
@@ -116,19 +126,59 @@ function FolderInput({ value, onChange, label }: { value: string; onChange: (v: 
   return <input className="input" value={v} placeholder="(vault root)" aria-label={label} onChange={(e) => setV(e.target.value)} onBlur={() => onChange(v.trim())} />;
 }
 
+function DateFormatInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  return (
+    <span className="date-format">
+      <input className="input" value={v} aria-label="Daily note name format" onChange={(e) => setV(e.target.value)} onBlur={() => onChange(v.trim() || "YYYY-MM-DD")} />
+      <span className="muted small">{formatDate(new Date(), v || "YYYY-MM-DD")}</span>
+    </span>
+  );
+}
+
 function FileSettings() {
   const { settings, update } = useSettings();
   return (
     <>
       <h2>Files & links</h2>
-      <Row label="Folder for new notes" desc="Also used when following a link to a note that doesn't exist yet.">
-        <FolderInput label="Folder for new notes" value={settings.newNoteFolder} onChange={(v) => update({ newNoteFolder: v })} />
+      <Row label="Default location for new notes" desc="Also used when following a link to a note that doesn't exist yet.">
+        <select className="input" value={settings.newNoteLocation} onChange={(e) => update({ newNoteLocation: e.target.value as typeof settings.newNoteLocation })} aria-label="Default location for new notes">
+          <option value="root">Vault folder</option>
+          <option value="current">Same folder as current note</option>
+          <option value="folder">In the folder specified below</option>
+        </select>
+      </Row>
+      {settings.newNoteLocation === "folder" && (
+        <Row label="Folder for new notes">
+          <FolderInput label="Folder for new notes" value={settings.newNoteFolder} onChange={(v) => update({ newNoteFolder: v })} />
+        </Row>
+      )}
+      <Row label="Attachment folder" desc='Where pasted or dropped files are saved. Empty = vault root, "./" = next to the note, "./assets" = subfolder of the note&apos;s folder.'>
+        <FolderInput label="Attachment folder" value={settings.attachmentFolder} onChange={(v) => update({ attachmentFolder: v })} />
+      </Row>
+      <Row label="Confirm before deleting" desc="Deleted files always go to the system trash.">
+        <Toggle label="Confirm before deleting" checked={settings.confirmDelete} onChange={(v) => update({ confirmDelete: v })} />
+      </Row>
+      <Row label="Local file history" desc="Keep snapshots of earlier versions on this computer (outside the vault).">
+        <Toggle label="Local file history" checked={settings.historyEnabled} onChange={(v) => update({ historyEnabled: v })} />
+      </Row>
+      <Row label="Snapshot interval" desc="Minimum minutes between two snapshots of the same note.">
+        <input className="input" type="number" min={0} max={1440} style={{ width: 80 }} value={settings.historyIntervalMin} aria-label="Snapshot interval in minutes" onChange={(e) => update({ historyIntervalMin: Number(e.target.value) })} />
+      </Row>
+      <Row label="History length" desc="Days snapshots are kept.">
+        <input className="input" type="number" min={1} max={3650} style={{ width: 80 }} value={settings.historyKeepDays} aria-label="Days to keep snapshots" onChange={(e) => update({ historyKeepDays: Number(e.target.value) })} />
       </Row>
       <Row label="Update links when renaming" desc="Rewrite [[links]] in other notes when a note is renamed or moved.">
         <Toggle label="Update links when renaming" checked={settings.updateLinksOnRename} onChange={(v) => update({ updateLinksOnRename: v })} />
       </Row>
       <Row label="Daily notes" desc="Enables the daily note command (named YYYY-MM-DD).">
         <Toggle label="Daily notes" checked={settings.dailyNotesEnabled} onChange={(v) => update({ dailyNotesEnabled: v })} />
+      </Row>
+      <Row label="Daily note name format" desc="Tokens: YYYY MM DD ddd dddd MMMM, [literal text].">
+        <DateFormatInput value={settings.dailyNoteFormat} onChange={(v) => update({ dailyNoteFormat: v })} />
+      </Row>
+      <Row label="Daily note template" desc="Path or name of a note to use as the template (optional).">
+        <FolderInput label="Daily note template" value={settings.dailyNoteTemplate} onChange={(v) => update({ dailyNoteTemplate: v })} />
       </Row>
       <Row label="Daily notes folder">
         <FolderInput label="Daily notes folder" value={settings.dailyNoteFolder} onChange={(v) => update({ dailyNoteFolder: v })} />
@@ -147,7 +197,8 @@ const EDITOR_SHORTCUTS: [string, string][] = [
   ["Mod+`", "Inline code"],
   ["Mod+K", "Wrap selection in [[link]]"],
   ["Mod+L", "Toggle checklist item"],
-  ["Mod+Enter", "Follow link under cursor"],
+  ["Alt+Enter", "Follow link under cursor"],
+  ["Mod+Enter", "Open link under cursor in new tab"],
   ["Mod+Click", "Follow link (Mod+Alt+Click: new tab)"],
   ["Mod+F", "Find in note"],
   ["Mod+Alt+F", "Find and replace"],

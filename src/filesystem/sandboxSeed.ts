@@ -17,6 +17,10 @@ app to work on real folders.
 - Tag things #guide
 - [ ] Try the quick switcher (Mod+O)
 - [x] Open this note
+
+> [!tip] Live Preview
+> Syntax is hidden except on the line you're editing. Hover a link in
+> reading view (or Mod+hover in the editor) for a preview.
 `,
   "Ideas/Linking.md": `# Linking
 

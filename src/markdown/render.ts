@@ -76,6 +76,36 @@ function remarkWikilinks() {
   };
 }
 
+const CALLOUT_RE = /^\[!([\w-]+)\]([+-]?)[ \t]*(.*)$/;
+
+/** remark plugin: `> [!type] Title` blockquotes become callout boxes. */
+function remarkCallouts() {
+  return (tree: UNode) => {
+    const walk = (node: UNode) => {
+      node.children?.forEach(walk);
+      if (node.type !== "blockquote") return;
+      const first = node.children?.[0];
+      const text = first?.type === "paragraph" ? first.children?.[0] : undefined;
+      if (!text || text.type !== "text" || !text.value) return;
+      const nl = text.value.indexOf("\n");
+      const head = nl === -1 ? text.value : text.value.slice(0, nl);
+      const m = CALLOUT_RE.exec(head);
+      if (!m) return;
+      const type = m[1].toLowerCase();
+      const titleText = m[3] || type.charAt(0).toUpperCase() + type.slice(1);
+      text.value = nl === -1 ? "" : text.value.slice(nl + 1);
+      if (!text.value && first!.children!.length === 1) node.children!.shift();
+      node.data = { hName: "div", hProperties: { className: ["callout"], dataCallout: type, dataFold: m[2] || undefined } };
+      node.children!.unshift({
+        type: "paragraph",
+        data: { hName: "div", hProperties: { className: ["callout-title"] } },
+        children: [{ type: "text", value: titleText }],
+      });
+    };
+    walk(tree);
+  };
+}
+
 /** rehype plugin (runs after sanitize): move vault image sources to `data-src` so they load via IPC. */
 function rehypeVaultImages() {
   return (tree: UNode) => {
@@ -113,6 +143,7 @@ const schema: SanitizeSchema = {
       "dataTarget",
     ],
     img: [...(defaultSchema.attributes?.img ?? []), ["className", "embed"]],
+    div: [...(defaultSchema.attributes?.div ?? []), ["className", "callout", "callout-title"], "dataCallout", "dataFold"],
     code: [...(defaultSchema.attributes?.code ?? []), ["className", /^language-./]],
   },
   // Keep heading ids predictable without the default `user-content-` clobber prefix on links we generate.
@@ -124,6 +155,7 @@ const processor = unified()
   .use(remarkFrontmatter, ["yaml", "toml"])
   .use(remarkGfm)
   .use(remarkWikilinks)
+  .use(remarkCallouts)
   // Raw HTML in notes is never passed through (allowDangerousHtml is off).
   .use(remarkRehype)
   .use(rehypeSanitize, schema)

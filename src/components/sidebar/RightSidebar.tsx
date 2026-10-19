@@ -1,7 +1,12 @@
 import { useMemo } from "react";
 import { Link2, ListTree, Tags, Waypoints } from "lucide-react";
 import { useWorkspace } from "../../features/workspace/store";
-import { followLink, useVault, vaultIndex } from "../../vault/store";
+import { editNote, followLink, useVault, vaultIndex } from "../../vault/store";
+import { linkMention } from "../../links/mentions";
+import { useBookmarks } from "../../features/bookmarks/store";
+import { useUi } from "../../features/ui/store";
+import { useState } from "react";
+import { Highlighted } from "../common/Highlighted";
 import { useDoc } from "../../hooks/useDoc";
 import type { RightView } from "../../types";
 import { noteTitle } from "../../vault/paths";
@@ -88,6 +93,7 @@ function BacklinksPanel({ path }: { path: string }) {
           ))}
         </ul>
       )}
+      <UnlinkedMentions path={path} onJump={jump} />
       <div className="panel-header">
         <span className="panel-title">Outgoing links</span>
         <span className="count">{outgoing.length + unresolved.length}</span>
@@ -113,6 +119,45 @@ function BacklinksPanel({ path }: { path: string }) {
   );
 }
 
+function UnlinkedMentions({ path, onJump }: { path: string; onJump: (source: string, offset: number, newTab: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const indexVersion = useVault((s) => s.indexVersion);
+  // Computed only when expanded: it scans other notes' text.
+  const mentions = useMemo(() => (open ? vaultIndex.unlinkedMentions(path) : []), [open, path, indexVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const title = vaultIndex.get(path)?.title ?? noteTitle(path);
+  const link = (source: string, from: number, to: number, text: string) =>
+    void editNote(source, (c) => (c.slice(from, to) === text ? linkMention(c, { from, to }, title) : c));
+  return (
+    <>
+      <button className="panel-header as-button" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="panel-title">Unlinked mentions</span>
+        {open && <span className="count">{mentions.length}</span>}
+      </button>
+      {open && (
+        <ul className="backlinks">
+          {mentions.length === 0 && <li className="muted small pad">No unlinked mentions found.</li>}
+          {mentions.map((m, i) => (
+            <li key={`${m.source}:${m.from}:${i}`} className="mention">
+              <button className="backlink-item" onClick={(e) => onJump(m.source, m.from, e.metaKey || e.ctrlKey)}>
+                <span className="backlink-source-inline">{noteTitle(m.source)}</span>
+                <Highlighted text={m.context} ranges={rangeIn(m.context, m.text)} />
+              </button>
+              <button className="btn small mention-link" onClick={() => link(m.source, m.from, m.to, m.text)}>
+                Link
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function rangeIn(context: string, text: string): [number, number][] {
+  const i = context.toLowerCase().indexOf(text.toLowerCase());
+  return i === -1 ? [] : [[i, i + text.length]];
+}
+
 function listArrowNav(e: React.KeyboardEvent) {
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button")];
@@ -135,6 +180,12 @@ function OutlinePanel({ path }: { path: string }) {
             className="outline-row"
             style={{ paddingLeft: 10 + (h.level - min) * 14 }}
             onClick={() => window.dispatchEvent(new CustomEvent("marginalia:goto-heading", { detail: { path, heading: h.text, offset: h.offset } }))}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              useUi.getState().openContextMenu(e.clientX, e.clientY, [
+                { label: "Bookmark this heading", run: () => void useBookmarks.getState().toggle({ type: "heading", path, heading: h.text }) },
+              ]);
+            }}
           >
             {h.text}
           </button>

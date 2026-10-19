@@ -25,6 +25,14 @@ describe("markdown rendering", () => {
     expect(html).toContain('data-src="wikilink:pic.png"');
   });
 
+  it("renders callouts with type and title", () => {
+    const html = renderMarkdown("> [!warning] Careful now\n> Body text\n\n> [!tip]\n> Just body\n\n> plain quote");
+    expect(html).toMatch(/<div class="callout" data-callout="warning">\s*<div class="callout-title">Careful now<\/div>/);
+    expect(html).toContain("Body text");
+    expect(html).toMatch(/data-callout="tip">\s*<div class="callout-title">Tip<\/div>/);
+    expect(html).toContain("<blockquote>");
+  });
+
   it("hides frontmatter", () => {
     expect(renderMarkdown("---\nsecret: yes\n---\nBody")).not.toContain("secret");
   });

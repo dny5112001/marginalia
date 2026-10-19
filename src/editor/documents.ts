@@ -64,6 +64,8 @@ export interface DocumentManagerOptions {
   backups?: BackupStore;
   backupPrefix?: () => string;
   onSaved?: (path: string, content: string) => void;
+  /** Called just before disk content `previous` is replaced (for file history). */
+  beforeWrite?: (path: string, previous: string) => void;
   retryDelaysMs?: number[];
 }
 
@@ -80,7 +82,7 @@ export class DocumentManager {
   private internal = new Map<string, Internal>();
   private listeners = new Set<(path: string) => void>();
   private opening = new Map<string, Promise<DocState>>();
-  private opts: Required<Omit<DocumentManagerOptions, "onSaved">> & Pick<DocumentManagerOptions, "onSaved">;
+  private opts: Required<Omit<DocumentManagerOptions, "onSaved" | "beforeWrite">> & Pick<DocumentManagerOptions, "onSaved" | "beforeWrite">;
 
   constructor(opts: DocumentManagerOptions) {
     this.opts = {
@@ -216,6 +218,11 @@ export class DocumentManager {
       }
       const snapshot = d.content;
       this.set(path, { status: "saving" });
+      try {
+        this.opts.beforeWrite?.(path, d.saved);
+      } catch {
+        /* history is best-effort and must never block a save */
+      }
       try {
         const mtime = await this.opts.backend().writeText(path, snapshot, force ? undefined : d.mtime);
         force = false;

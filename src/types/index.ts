@@ -91,6 +91,9 @@ export interface Settings {
   editorFontSize: number;
   lineNumbers: boolean;
   lineWrapping: boolean;
+  livePreview: boolean;
+  readableLineLength: boolean;
+  spellcheck: boolean;
   autosaveDelayMs: number;
   newNoteFolder: string;
   attachmentFolder: string;
@@ -99,9 +102,16 @@ export interface Settings {
   templatesFolder: string;
   updateLinksOnRename: boolean;
   defaultViewMode: ViewMode;
+  historyEnabled: boolean;
+  historyIntervalMin: number;
+  historyKeepDays: number;
+  confirmDelete: boolean;
+  newNoteLocation: "root" | "current" | "folder";
+  dailyNoteFormat: string;
+  dailyNoteTemplate: string;
 }
 
-export type TabKind = "note" | "graph";
+export type TabKind = "note" | "graph" | "empty";
 
 export interface Tab {
   id: string;
@@ -113,7 +123,8 @@ export interface Tab {
   historyIndex: number;
 }
 
-export type LeftView = "files" | "search" | "tags";
+export type LeftView = "files" | "search" | "tags" | "bookmarks";
+export type FileSort = "name-asc" | "name-desc" | "modified-new" | "modified-old";
 export type RightView = "backlinks" | "outline" | "properties" | "localGraph";
 
 export interface WorkspaceLayout {
@@ -127,4 +138,5 @@ export interface WorkspaceLayout {
   rightView: RightView;
   expandedFolders: string[];
   recentFiles: string[];
+  fileSort: FileSort;
 }

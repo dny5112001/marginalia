@@ -3,6 +3,7 @@ import { headingSlug, parseNote } from "../links/parse";
 import { LinkResolver } from "../links/resolve";
 import { isMarkdown } from "../vault/paths";
 import { SearchIndex } from "../search/searchIndex";
+import { findMentions, type Mention } from "../links/mentions";
 
 interface NoteRecord {
   content: string;
@@ -56,7 +57,7 @@ export class VaultIndex {
     const newFile = !this.files.has(path);
     this.files.add(path);
     this.notes.set(path, { content, parsed });
-    this.search.add(path, parsed.title, content, parsed.allTags);
+    this.search.add(path, parsed.title, content, parsed.allTags, parsed.frontmatter);
     const aliasesChanged = (prev?.parsed.aliases.join("\0") ?? "") !== parsed.aliases.join("\0");
     if (newFile || aliasesChanged) this.relinkAll();
     else this.relink(path);
@@ -71,7 +72,7 @@ export class VaultIndex {
       const parsed = parseNote(n.path, n.content);
       this.files.add(n.path);
       this.notes.set(n.path, { content: n.content, parsed });
-      this.search.add(n.path, parsed.title, n.content, parsed.allTags);
+      this.search.add(n.path, parsed.title, n.content, parsed.allTags, parsed.frontmatter);
     }
     this.relinkAll();
   }
@@ -175,6 +176,23 @@ export class VaultIndex {
       }
     }
     return out.sort((a, b) => a.source.localeCompare(b.source) || a.link.from - b.link.from);
+  }
+
+  /** Plain-text mentions of this note's title or aliases in other notes that don't link to it there. */
+  unlinkedMentions(path: string): (Mention & { source: string })[] {
+    const rec = this.notes.get(path);
+    if (!rec) return [];
+    const names = [rec.parsed.title, ...rec.parsed.aliases];
+    const candidates = new Set<string>();
+    for (const n of names) if (n.trim().length >= 2) for (const h of this.search.search(`"${n.replace(/"/g, "")}"`, { limit: 2000 })) candidates.add(h.path);
+    const out: (Mention & { source: string })[] = [];
+    for (const source of [...candidates].sort()) {
+      if (source === path) continue;
+      const other = this.notes.get(source);
+      if (!other) continue;
+      for (const m of findMentions(other.content, names, other.parsed.links)) out.push({ ...m, source });
+    }
+    return out;
   }
 
   outgoingLinks(path: string): string[] {

@@ -6,14 +6,18 @@ import { documents, renamePath } from "../../vault/store";
 import { useWorkspace } from "../../features/workspace/store";
 import { MarkdownEditor } from "../editor/MarkdownEditor";
 import { MarkdownPreview } from "../editor/MarkdownPreview";
+import { PropertiesEditor } from "../editor/PropertiesEditor";
 import { basename, dirname, joinPath, noteTitle, validateName } from "../../vault/paths";
 import { toast } from "../../features/ui/store";
 import { formatShortcut } from "../../commands/registry";
+import { useSettings } from "../../settings/store";
 
 export function NoteView({ tab, active }: { tab: Tab; active: boolean }) {
   const path = tab.path!;
   const doc = useDoc(path);
   const setMode = useWorkspace((s) => s.setMode);
+  const readable = useSettings((s) => s.settings.readableLineLength);
+  const livePreview = useSettings((s) => s.settings.livePreview);
 
   useEffect(() => {
     void documents.open(path);
@@ -26,7 +30,7 @@ export function NoteView({ tab, active }: { tab: Tab; active: boolean }) {
   ];
 
   return (
-    <div className="note-view">
+    <div className="note-view" data-note-path={path}>
       <header className="note-header">
         <div className="breadcrumb" title={path}>
           {dirname(path)
@@ -54,17 +58,23 @@ export function NoteView({ tab, active }: { tab: Tab; active: boolean }) {
         </div>
       </header>
       {doc && <Banners path={path} />}
-      <div className={`note-body mode-${tab.mode}`}>
+      <div className={`note-body mode-${tab.mode} ${readable ? "" : "full-width"}`}>
         {tab.mode !== "preview" && (
           <div className="pane editor-pane">
-            <TitleInput path={path} />
-            <MarkdownEditor path={path} active={active} />
+            <div className="pane-scroll">
+              <TitleInput path={path} />
+              {livePreview && <PropertiesEditor path={path} />}
+              <MarkdownEditor path={path} active={active} />
+            </div>
           </div>
         )}
         {tab.mode !== "edit" && (
           <div className="pane preview-pane">
-            {tab.mode === "preview" && <h1 className="preview-title">{noteTitle(path)}</h1>}
-            {doc && doc.status !== "loading" ? <MarkdownPreview path={path} content={doc.content} /> : <div className="editor-loading">Loading…</div>}
+            <div className="pane-scroll">
+              {tab.mode === "preview" && <h1 className="preview-title">{noteTitle(path)}</h1>}
+              {tab.mode === "preview" && <PropertiesEditor path={path} />}
+              {doc && doc.status !== "loading" ? <MarkdownPreview path={path} content={doc.content} /> : <div className="editor-loading">Loading…</div>}
+            </div>
           </div>
         )}
       </div>
